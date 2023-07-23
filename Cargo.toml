@@ -17,6 +17,8 @@ bench = false
 [dependencies]
 nu-plugin = "0.82.0"
 nu-protocol = "0.82.0"
+tokio = "1.29.1"
+trust-dns-resolver = "0.22.0"
 
 [patch.crates-io]
 pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }

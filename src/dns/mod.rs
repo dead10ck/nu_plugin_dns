@@ -1,5 +1,5 @@
 use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
-use nu_protocol::{Category, PluginSignature, Span, SyntaxShape, Value};
+use nu_protocol::{Category, PluginSignature, SyntaxShape, Value};
 
 pub struct Dns {}
 
@@ -52,6 +52,21 @@ impl Dns {
         Ok(())
     }
     */
+    async fn run_impl(
+        &mut self,
+        name: &str,
+        call: &EvaluatedCall,
+        input: &Value,
+    ) -> Result<Value, LabeledError> {
+        match name {
+            "dns query" => self.query(call, input),
+            _ => Err(LabeledError {
+                label: "No such command".into(),
+                msg: "No such command".into(),
+                span: Some(call.head),
+            }),
+        }
+    }
 
     fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
         eprintln!("call: {:?}", call);
@@ -100,14 +115,7 @@ impl Plugin for Dns {
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
-        // You can use the name to identify what plugin signature was called
-        match name {
-            "dns query" => self.query(call, input),
-            _ => Err(LabeledError {
-                label: "No such command".into(),
-                msg: "No such command".into(),
-                span: Some(call.head),
-            }),
-        }
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(self.run_impl(name, call, input))
     }
 }
