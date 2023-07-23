@@ -1,0 +1,22 @@
+[package]
+authors = ["Skyler Hawthorne <skyler@dead10ck.dev>"]
+description = "A DNS utility for nushell"
+repository = "https://github.com/dead10ck/nu_plugin_dns"
+edition = "2021"
+license = "MPL-2.0"
+name = "nu_plugin_dns"
+version = "0.0.1"
+
+[[bin]]
+name = "nu_plugin_dns"
+bench = false
+
+[lib]
+bench = false
+
+[dependencies]
+nu-plugin = "0.82.0"
+nu-protocol = "0.82.0"
+
+[patch.crates-io]
+pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
