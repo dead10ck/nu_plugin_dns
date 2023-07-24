@@ -1,5 +1,35 @@
 use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
-use nu_protocol::{Category, PluginSignature, SyntaxShape, Value};
+use nu_protocol::{Category, PluginSignature, Span, SyntaxShape, Value};
+use trust_dns_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    proto::error::ProtoError,
+    Name, TokioAsyncResolver,
+};
+
+const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata"];
+
+pub struct Record<'r>(&'r trust_dns_proto::rr::resource::Record);
+
+impl<'r> From<Record<'r>> for Value {
+    fn from(record: Record) -> Self {
+        let Record(record) = record;
+
+        let name = Value::string(record.name().to_utf8(), Span::unknown());
+        let rtype = Value::string(record.rr_type().to_string(), Span::unknown());
+        let class = Value::string(record.dns_class().to_string(), Span::unknown());
+        let ttl = Value::int(record.ttl() as i64, Span::unknown());
+        let rdata = match record.data() {
+            Some(data) => Value::string(data.to_string(), Span::unknown()),
+            None => Value::nothing(Span::unknown()),
+        };
+
+        Value::record(
+            Vec::from_iter(RECORD_COLS.iter().map(|s| (*s).into())),
+            vec![name, rtype, class, ttl, rdata],
+            Span::unknown(),
+        )
+    }
+}
 
 pub struct Dns {}
 
@@ -59,7 +89,7 @@ impl Dns {
         input: &Value,
     ) -> Result<Value, LabeledError> {
         match name {
-            "dns query" => self.query(call, input),
+            "dns query" => self.query(call, input).await,
             _ => Err(LabeledError {
                 label: "No such command".into(),
                 msg: "No such command".into(),
@@ -68,14 +98,63 @@ impl Dns {
         }
     }
 
-    fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
-        eprintln!("call: {:?}", call);
-        eprintln!("input: {:?}", input);
+    async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
+        let name = match call.req(0)? {
+            Value::String { val, span } => {
+                Name::from_utf8(val).map_err(|proto_err| parse_name_err(proto_err, span))?
+            }
+            Value::List { vals, span } => Name::from_labels(vals.into_iter().map(|val| {
+                if let Value::Binary { val: bin_val, .. } = val {
+                    bin_val
+                } else {
+                    unreachable!("Invalid input type");
+                }
+            }))
+            .map_err(|err| parse_name_err(err, span))?,
+            _ => unreachable!("Invalid input type"),
+        };
 
-        let name: Value = call.req(0)?;
-        eprintln!("name: {:?}", name);
+        let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
+            Ok(res) => res,
+            Err(err) => {
+                eprintln!("Warning: falling back to default DNS config: {}", err);
+                TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+                    .map_err(|err| system_conf_err(err, call.head))?
+            }
+        };
 
-        Ok(Value::Nothing { span: call.head })
+        let resp = resolver
+            .lookup(name, trust_dns_resolver::proto::rr::RecordType::A)
+            .await
+            .map_err(|err| LabeledError {
+                label: "DnsResolveError".into(),
+                msg: format!("Failed to resolve: {}", err),
+                span: Some(call.head),
+            })?;
+
+        let records: Vec<_> = resp
+            .records()
+            .iter()
+            .map(|record| Value::from(Record(record)))
+            .collect();
+
+        Ok(Value::list(records, call.head))
+    }
+}
+
+fn system_conf_err(err: trust_dns_resolver::error::ResolveError, span: Span) -> LabeledError {
+    LabeledError {
+        label: "SystemDnsConfigError".into(),
+        msg: format!("Failed to get system DNS config: {}", err),
+        span: Some(span),
+    }
+}
+
+fn parse_name_err(err: ProtoError, span: Span) -> LabeledError {
+    LabeledError {
+        label: "DnsNameParseError".into(),
+        msg: format!("Error parsing as DNS name: {}", err),
+        span: Some(span),
     }
 }
 

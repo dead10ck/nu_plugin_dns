@@ -814,6 +814,7 @@ dependencies = [
  "nu-plugin",
  "nu-protocol",
  "tokio",
+ "trust-dns-proto",
  "trust-dns-resolver",
 ]
 
