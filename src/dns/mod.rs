@@ -2,6 +2,7 @@ use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
 use nu_protocol::{Category, PluginSignature, Span, SyntaxShape, Value};
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
+    error::ResolveErrorKind,
     proto::error::ProtoError,
     Name, TokioAsyncResolver,
 };
@@ -99,20 +100,22 @@ impl Dns {
     }
 
     async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
-        let name = match call.req(0)? {
-            Value::String { val, span } => {
-                Name::from_utf8(val).map_err(|proto_err| parse_name_err(proto_err, span))?
-            }
-            Value::List { vals, span } => Name::from_labels(vals.into_iter().map(|val| {
-                if let Value::Binary { val: bin_val, .. } = val {
-                    bin_val
-                } else {
-                    unreachable!("Invalid input type");
-                }
-            }))
-            .map_err(|err| parse_name_err(err, span))?,
+        let (name, name_span) = match call.req(0)? {
+            Value::String { val, span } => (Name::from_utf8(val), span),
+            Value::List { vals, span } => (
+                Name::from_labels(vals.into_iter().map(|val| {
+                    if let Value::Binary { val: bin_val, .. } = val {
+                        bin_val
+                    } else {
+                        unreachable!("Invalid input type");
+                    }
+                })),
+                span,
+            ),
             _ => unreachable!("Invalid input type"),
         };
+
+        let name = name.map_err(|err| parse_name_err(err, name_span))?;
 
         let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
             Ok(res) => res,
@@ -125,18 +128,26 @@ impl Dns {
 
         let resp = resolver
             .lookup(name, trust_dns_resolver::proto::rr::RecordType::A)
-            .await
-            .map_err(|err| LabeledError {
-                label: "DnsResolveError".into(),
-                msg: format!("Failed to resolve: {}", err),
-                span: Some(call.head),
-            })?;
+            .await;
 
-        let records: Vec<_> = resp
-            .records()
-            .iter()
-            .map(|record| Value::from(Record(record)))
-            .collect();
+        let records = match resp {
+            Err(err) => {
+                if matches!(err.kind(), ResolveErrorKind::NoRecordsFound { .. }) {
+                    vec![]
+                } else {
+                    return Err(LabeledError {
+                        label: "DnsResolveError".into(),
+                        msg: format!("Failed to resolve: {}", err),
+                        span: Some(call.head),
+                    });
+                }
+            }
+            Ok(lookup) => lookup
+                .records()
+                .iter()
+                .map(|record| Value::from(Record(record)))
+                .collect(),
+        };
 
         Ok(Value::list(records, call.head))
     }
