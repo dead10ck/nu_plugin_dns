@@ -7,6 +7,8 @@ use trust_dns_resolver::{
     Name, TokioAsyncResolver,
 };
 
+const LOOKUP_RESULT_COLS: &[&str] = &["question", "answer"];
+const QUERY_COLS: &[&str] = &["name", "type", "class"];
 const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata"];
 
 pub struct Record<'r>(&'r trust_dns_proto::rr::resource::Record);
@@ -27,6 +29,24 @@ impl<'r> From<Record<'r>> for Value {
         Value::record(
             Vec::from_iter(RECORD_COLS.iter().map(|s| (*s).into())),
             vec![name, rtype, class, ttl, rdata],
+            Span::unknown(),
+        )
+    }
+}
+
+pub struct Query<'r>(&'r trust_dns_proto::op::query::Query);
+
+impl<'r> From<Query<'r>> for Value {
+    fn from(query: Query) -> Self {
+        let Query(query) = query;
+
+        let name = Value::string(query.name().to_utf8(), Span::unknown());
+        let qtype = Value::string(query.query_type().to_string(), Span::unknown());
+        let class = Value::string(query.query_class().to_string(), Span::unknown());
+
+        Value::record(
+            Vec::from_iter(QUERY_COLS.iter().map(|s| (*s).into())),
+            vec![name, qtype, class],
             Span::unknown(),
         )
     }
@@ -130,10 +150,11 @@ impl Dns {
             .lookup(name, trust_dns_resolver::proto::rr::RecordType::A)
             .await;
 
-        let records = match resp {
+        let (question, answer) = match resp {
             Err(err) => {
-                if matches!(err.kind(), ResolveErrorKind::NoRecordsFound { .. }) {
-                    vec![]
+                if let ResolveErrorKind::NoRecordsFound { query, .. } = err.kind() {
+                    let question = Value::from(Query(query));
+                    (question, vec![])
                 } else {
                     return Err(LabeledError {
                         label: "DnsResolveError".into(),
@@ -142,14 +163,23 @@ impl Dns {
                     });
                 }
             }
-            Ok(lookup) => lookup
-                .records()
-                .iter()
-                .map(|record| Value::from(Record(record)))
-                .collect(),
+            Ok(lookup) => {
+                let question = Value::from(Query(lookup.query()));
+                let records = lookup
+                    .records()
+                    .iter()
+                    .map(|record| Value::from(Record(record)))
+                    .collect();
+
+                (question, records)
+            }
         };
 
-        Ok(Value::list(records, call.head))
+        Ok(Value::record(
+            Vec::from_iter(LOOKUP_RESULT_COLS.iter().map(|s| (*s).into())),
+            vec![question, Value::list(answer, Span::unknown())],
+            Span::unknown(),
+        ))
     }
 }
 
