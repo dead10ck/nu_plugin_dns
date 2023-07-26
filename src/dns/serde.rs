@@ -28,11 +28,11 @@ impl<'r> From<Header<'r>> for Value {
         let id = Value::int(header.id().into(), Span::unknown());
         let message_type = Value::string(header.message_type().to_string(), Span::unknown());
         let op_code = Value::string(header.op_code().to_string(), Span::unknown());
-        let authoritative = Value::boolean(header.authoritative(), Span::unknown());
-        let truncated = Value::boolean(header.truncated(), Span::unknown());
-        let recursion_desired = Value::boolean(header.recursion_desired(), Span::unknown());
-        let recursion_available = Value::boolean(header.recursion_available(), Span::unknown());
-        let authentic_data = Value::boolean(header.authentic_data(), Span::unknown());
+        let authoritative = Value::bool(header.authoritative(), Span::unknown());
+        let truncated = Value::bool(header.truncated(), Span::unknown());
+        let recursion_desired = Value::bool(header.recursion_desired(), Span::unknown());
+        let recursion_available = Value::bool(header.recursion_available(), Span::unknown());
+        let authentic_data = Value::bool(header.authentic_data(), Span::unknown());
         let response_code = Value::string(header.response_code().to_string(), Span::unknown());
         let query_count = Value::int(header.query_count().into(), Span::unknown());
         let answer_count = Value::int(header.answer_count().into(), Span::unknown());
