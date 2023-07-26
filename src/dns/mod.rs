@@ -12,60 +12,11 @@ use trust_dns_resolver::{
     Name,
 };
 
-const LOOKUP_RESULT_COLS: &[&str] = &["header", "question", "answer"];
 mod serde;
 
 pub struct Dns {}
 
 impl Dns {
-    /*
-    fn print_values(
-        &self,
-        index: u32,
-        call: &EvaluatedCall,
-        input: &Value,
-    ) -> Result<(), LabeledError> {
-        // Note. When debugging your plugin, you may want to print something to the console
-        // Use the eprintln macro to print your messages. Trying to print to stdout will
-        // cause a decoding error for your message
-        eprintln!("Calling test {index} signature");
-        eprintln!("value received {input:?}");
-
-        // To extract the arguments from the Call object you can use the functions req, has_flag,
-        // opt, rest, and get_flag
-        //
-        // Note that plugin calls only accept simple arguments, this means that you can
-        // pass to the plug in Int and String. This should be improved when the plugin has
-        // the ability to call back to NuShell to extract more information
-        // Keep this in mind when designing your plugin signatures
-        let a: i64 = call.req(0)?;
-        let b: String = call.req(1)?;
-        let flag = call.has_flag("flag");
-        let opt: Option<i64> = call.opt(2)?;
-        let named: Option<String> = call.get_flag("named")?;
-        let rest: Vec<String> = call.rest(3)?;
-
-        eprintln!("Required values");
-        eprintln!("a: {a:}");
-        eprintln!("b: {b:}");
-        eprintln!("flag: {flag:}");
-        eprintln!("rest: {rest:?}");
-
-        if let Some(v) = opt {
-            eprintln!("Found optional value opt: {v:}")
-        } else {
-            eprintln!("No optional value found")
-        }
-
-        if let Some(v) = named {
-            eprintln!("Named value: {v:?}")
-        } else {
-            eprintln!("No named value found")
-        }
-
-        Ok(())
-    }
-    */
     async fn run_impl(
         &mut self,
         name: &str,
@@ -126,7 +77,7 @@ impl Dns {
 
         let _bg_handle = tokio::spawn(bg);
 
-        let resp = client
+        let message = client
             .query(name, DNSClass::IN, RecordType::A)
             .await
             .map_err(|err| LabeledError {
@@ -136,23 +87,7 @@ impl Dns {
             })?
             .into_inner();
 
-        let header = Value::from(serde::Header(resp.header()));
-
-        let question = resp.query().map_or_else(
-            || Value::record(Vec::default(), Vec::default(), Span::unknown()),
-            |q| Value::from(serde::Query(q)),
-        );
-        let answer = resp
-            .answers()
-            .iter()
-            .map(|record| Value::from(serde::Record(record)))
-            .collect();
-
-        Ok(Value::record(
-            Vec::from_iter(LOOKUP_RESULT_COLS.iter().map(|s| (*s).into())),
-            vec![header, question, Value::list(answer, Span::unknown())],
-            Span::unknown(),
-        ))
+        Ok(Value::from(serde::Message(&message)))
     }
 }
 

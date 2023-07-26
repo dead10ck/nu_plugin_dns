@@ -1,6 +1,7 @@
 use nu_protocol::Span;
 use nu_protocol::Value;
 
+const MESSAGE_COLS: &[&str] = &["header", "question", "answer"];
 pub(crate) const HEADER_COLS: &[&str] = &[
     "id",
     "message_type",
@@ -18,6 +19,33 @@ pub(crate) const HEADER_COLS: &[&str] = &[
 ];
 pub(crate) const QUERY_COLS: &[&str] = &["name", "type", "class"];
 pub(crate) const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata"];
+
+pub struct Message<'r>(pub(crate) &'r trust_dns_proto::op::Message);
+
+impl<'r> From<Message<'r>> for Value {
+    fn from(message: Message<'r>) -> Self {
+        let Message(message) = message;
+
+        let header = Value::from(Header(message.header()));
+
+        let question = message.query().map_or_else(
+            || Value::record(Vec::default(), Vec::default(), Span::unknown()),
+            |q| Value::from(Query(q)),
+        );
+
+        let answer = message
+            .answers()
+            .iter()
+            .map(|record| Value::from(Record(record)))
+            .collect();
+
+        Value::record(
+            Vec::from_iter(MESSAGE_COLS.iter().map(|s| (*s).into())),
+            vec![header, question, Value::list(answer, Span::unknown())],
+            Span::unknown(),
+        )
+    }
+}
 
 pub struct Header<'r>(pub(crate) &'r trust_dns_proto::op::Header);
 
