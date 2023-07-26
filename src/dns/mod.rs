@@ -1,10 +1,15 @@
 use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
 use nu_protocol::{Category, PluginSignature, Span, SyntaxShape, Value};
+use tokio::net::UdpSocket;
+use trust_dns_client::client::{AsyncClient, ClientHandle};
+use trust_dns_proto::{
+    rr::{DNSClass, RecordType},
+    udp::UdpClientStream,
+};
 use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    error::ResolveErrorKind,
+    config::{Protocol, ResolverConfig},
     proto::error::ProtoError,
-    Name, TokioAsyncResolver,
+    Name,
 };
 
 const LOOKUP_RESULT_COLS: &[&str] = &["question", "answer"];
@@ -119,7 +124,7 @@ impl Dns {
         }
     }
 
-    async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
+    async fn query(&self, call: &EvaluatedCall, _input: &Value) -> Result<Value, LabeledError> {
         let (name, name_span) = match call.req(0)? {
             Value::String { val, span } => (Name::from_utf8(val), span),
             Value::List { vals, span } => (
@@ -136,58 +141,58 @@ impl Dns {
         };
 
         let name = name.map_err(|err| parse_name_err(err, name_span))?;
-
-        let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
-            Ok(res) => res,
-            Err(err) => {
-                eprintln!("Warning: falling back to default DNS config: {}", err);
-                TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-                    .map_err(|err| system_conf_err(err, call.head))?
+        let (config, _) = trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
+        let (addr, protocol) = match config.name_servers() {
+            [ns, ..] => (ns.socket_addr, ns.protocol),
+            [] => {
+                let config = ResolverConfig::default();
+                let ns = config.name_servers().first().unwrap();
+                (ns.socket_addr, ns.protocol)
             }
         };
 
-        let resp = resolver
-            .lookup(name, trust_dns_resolver::proto::rr::RecordType::A)
-            .await;
-
-        let (question, answer) = match resp {
-            Err(err) => {
-                if let ResolveErrorKind::NoRecordsFound { query, .. } = err.kind() {
-                    let question = Value::from(Query(query));
-                    (question, vec![])
-                } else {
-                    return Err(LabeledError {
-                        label: "DnsResolveError".into(),
-                        msg: format!("Failed to resolve: {}", err),
-                        span: Some(call.head),
-                    });
-                }
+        let (mut client, bg) = match protocol {
+            Protocol::Udp => {
+                let conn = UdpClientStream::<UdpSocket>::new(addr);
+                AsyncClient::connect(conn)
+                    .await
+                    .map_err(|err| LabeledError {
+                        label: "UdpConnectError".into(),
+                        msg: format!("Error creating UDP client connection: {}", err),
+                        span: None,
+                    })?
             }
-            Ok(lookup) => {
-                let question = Value::from(Query(lookup.query()));
-                let records = lookup
-                    .records()
-                    .iter()
-                    .map(|record| Value::from(Record(record)))
-                    .collect();
-
-                (question, records)
-            }
+            Protocol::Tcp => todo!(),
+            _ => todo!(),
         };
+
+        let _bg_handle = tokio::spawn(bg);
+
+        let resp = client
+            .query(name, DNSClass::IN, RecordType::A)
+            .await
+            .map_err(|err| LabeledError {
+                label: "DNSResponseError".into(),
+                msg: format!("Error in DNS response: {}", err),
+                span: None,
+            })?
+            .into_inner();
+
+        let question = resp.query().map_or_else(
+            || Value::record(Vec::default(), Vec::default(), Span::unknown()),
+            |q| Value::from(Query(q)),
+        );
+        let answer = resp
+            .answers()
+            .iter()
+            .map(|record| Value::from(Record(record)))
+            .collect();
 
         Ok(Value::record(
             Vec::from_iter(LOOKUP_RESULT_COLS.iter().map(|s| (*s).into())),
             vec![question, Value::list(answer, Span::unknown())],
             Span::unknown(),
         ))
-    }
-}
-
-fn system_conf_err(err: trust_dns_resolver::error::ResolveError, span: Span) -> LabeledError {
-    LabeledError {
-        label: "SystemDnsConfigError".into(),
-        msg: format!("Failed to get system DNS config: {}", err),
-        span: Some(span),
     }
 }
 

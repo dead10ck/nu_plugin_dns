@@ -18,6 +18,7 @@ bench = false
 nu-plugin = "0.82.0"
 nu-protocol = "0.82.0"
 tokio = "1.29.1"
+trust-dns-client = "0.22.0"
 trust-dns-proto = "0.22.0"
 trust-dns-resolver = "0.22.0"
 
