@@ -12,7 +12,7 @@ use trust_dns_resolver::{
     Name,
 };
 
-const LOOKUP_RESULT_COLS: &[&str] = &["question", "answer"];
+const LOOKUP_RESULT_COLS: &[&str] = &["header", "question", "answer"];
 mod serde;
 
 pub struct Dns {}
@@ -136,6 +136,8 @@ impl Dns {
             })?
             .into_inner();
 
+        let header = Value::from(serde::Header(resp.header()));
+
         let question = resp.query().map_or_else(
             || Value::record(Vec::default(), Vec::default(), Span::unknown()),
             |q| Value::from(serde::Query(q)),
@@ -148,7 +150,7 @@ impl Dns {
 
         Ok(Value::record(
             Vec::from_iter(LOOKUP_RESULT_COLS.iter().map(|s| (*s).into())),
-            vec![question, Value::list(answer, Span::unknown())],
+            vec![header, question, Value::list(answer, Span::unknown())],
             Span::unknown(),
         ))
     }
