@@ -13,49 +13,7 @@ use trust_dns_resolver::{
 };
 
 const LOOKUP_RESULT_COLS: &[&str] = &["question", "answer"];
-const QUERY_COLS: &[&str] = &["name", "type", "class"];
-const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata"];
-
-pub struct Record<'r>(&'r trust_dns_proto::rr::resource::Record);
-
-impl<'r> From<Record<'r>> for Value {
-    fn from(record: Record) -> Self {
-        let Record(record) = record;
-
-        let name = Value::string(record.name().to_utf8(), Span::unknown());
-        let rtype = Value::string(record.rr_type().to_string(), Span::unknown());
-        let class = Value::string(record.dns_class().to_string(), Span::unknown());
-        let ttl = Value::int(record.ttl() as i64, Span::unknown());
-        let rdata = match record.data() {
-            Some(data) => Value::string(data.to_string(), Span::unknown()),
-            None => Value::nothing(Span::unknown()),
-        };
-
-        Value::record(
-            Vec::from_iter(RECORD_COLS.iter().map(|s| (*s).into())),
-            vec![name, rtype, class, ttl, rdata],
-            Span::unknown(),
-        )
-    }
-}
-
-pub struct Query<'r>(&'r trust_dns_proto::op::query::Query);
-
-impl<'r> From<Query<'r>> for Value {
-    fn from(query: Query) -> Self {
-        let Query(query) = query;
-
-        let name = Value::string(query.name().to_utf8(), Span::unknown());
-        let qtype = Value::string(query.query_type().to_string(), Span::unknown());
-        let class = Value::string(query.query_class().to_string(), Span::unknown());
-
-        Value::record(
-            Vec::from_iter(QUERY_COLS.iter().map(|s| (*s).into())),
-            vec![name, qtype, class],
-            Span::unknown(),
-        )
-    }
-}
+mod serde;
 
 pub struct Dns {}
 
@@ -180,12 +138,12 @@ impl Dns {
 
         let question = resp.query().map_or_else(
             || Value::record(Vec::default(), Vec::default(), Span::unknown()),
-            |q| Value::from(Query(q)),
+            |q| Value::from(serde::Query(q)),
         );
         let answer = resp
             .answers()
             .iter()
-            .map(|record| Value::from(Record(record)))
+            .map(|record| Value::from(serde::Record(record)))
             .collect();
 
         Ok(Value::record(
