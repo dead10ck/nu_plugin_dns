@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use nu_protocol::Span;
 use nu_protocol::Value;
 
@@ -58,6 +60,34 @@ impl<'r> From<Message<'r>> for Value {
     }
 }
 
+fn code_to_record_u16<C>(code: C) -> Value
+where
+    C: Display + Into<u16>,
+{
+    Value::record(
+        vec!["name".into(), "code".into()],
+        vec![
+            Value::string(code.to_string(), Span::unknown()),
+            Value::int(Into::<u16>::into(code) as i64, Span::unknown()),
+        ],
+        Span::unknown(),
+    )
+}
+
+fn code_to_record_u8<C>(code: C) -> Value
+where
+    C: Display + Into<u8>,
+{
+    Value::record(
+        vec!["name".into(), "code".into()],
+        vec![
+            Value::string(code.to_string(), Span::unknown()),
+            Value::int(Into::<u8>::into(code) as i64, Span::unknown()),
+        ],
+        Span::unknown(),
+    )
+}
+
 pub struct Header<'r>(pub(crate) &'r trust_dns_proto::op::Header);
 
 impl<'r> From<Header<'r>> for Value {
@@ -65,14 +95,21 @@ impl<'r> From<Header<'r>> for Value {
         let Header(header) = header;
 
         let id = Value::int(header.id().into(), Span::unknown());
-        let message_type = Value::string(header.message_type().to_string(), Span::unknown());
-        let op_code = Value::string(header.op_code().to_string(), Span::unknown());
+        let message_type = Value::record(
+            vec!["name".into(), "code".into()],
+            vec![
+                Value::string(header.message_type().to_string(), Span::unknown()),
+                Value::int(header.message_type() as i64, Span::unknown()),
+            ],
+            Span::unknown(),
+        );
+        let op_code = code_to_record_u8(header.op_code());
         let authoritative = Value::bool(header.authoritative(), Span::unknown());
         let truncated = Value::bool(header.truncated(), Span::unknown());
         let recursion_desired = Value::bool(header.recursion_desired(), Span::unknown());
         let recursion_available = Value::bool(header.recursion_available(), Span::unknown());
         let authentic_data = Value::bool(header.authentic_data(), Span::unknown());
-        let response_code = Value::string(header.response_code().to_string(), Span::unknown());
+        let response_code = code_to_record_u16(header.response_code());
         let query_count = Value::int(header.query_count().into(), Span::unknown());
         let answer_count = Value::int(header.answer_count().into(), Span::unknown());
         let name_server_count = Value::int(header.name_server_count().into(), Span::unknown());
@@ -107,8 +144,8 @@ impl<'r> From<Query<'r>> for Value {
         let Query(query) = query;
 
         let name = Value::string(query.name().to_utf8(), Span::unknown());
-        let qtype = Value::string(query.query_type().to_string(), Span::unknown());
-        let class = Value::string(query.query_class().to_string(), Span::unknown());
+        let qtype = code_to_record_u16(query.query_type());
+        let class = code_to_record_u16(query.query_class());
 
         Value::record(
             Vec::from_iter(QUERY_COLS.iter().map(|s| (*s).into())),
@@ -125,8 +162,8 @@ impl<'r> From<Record<'r>> for Value {
         let Record(record) = record;
 
         let name = Value::string(record.name().to_utf8(), Span::unknown());
-        let rtype = Value::string(record.rr_type().to_string(), Span::unknown());
-        let class = Value::string(record.dns_class().to_string(), Span::unknown());
+        let rtype = code_to_record_u16(record.rr_type());
+        let class = code_to_record_u16(record.dns_class());
         let ttl = Value::int(record.ttl() as i64, Span::unknown());
         let rdata = match record.data() {
             Some(data) => Value::string(data.to_string(), Span::unknown()),
