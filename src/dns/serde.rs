@@ -1,7 +1,7 @@
 use nu_protocol::Span;
 use nu_protocol::Value;
 
-const MESSAGE_COLS: &[&str] = &["header", "question", "answer"];
+const MESSAGE_COLS: &[&str] = &["header", "question", "answer", "authority", "additional"];
 pub(crate) const HEADER_COLS: &[&str] = &[
     "id",
     "message_type",
@@ -33,15 +33,26 @@ impl<'r> From<Message<'r>> for Value {
             |q| Value::from(Query(q)),
         );
 
-        let answer = message
-            .answers()
-            .iter()
-            .map(|record| Value::from(Record(record)))
-            .collect();
+        let parse_records = |records: &[trust_dns_client::rr::Record]| {
+            records
+                .iter()
+                .map(|record| Value::from(Record(record)))
+                .collect()
+        };
+
+        let answer = parse_records(message.answers());
+        let authority = parse_records(message.name_servers());
+        let additional = parse_records(message.additionals());
 
         Value::record(
             Vec::from_iter(MESSAGE_COLS.iter().map(|s| (*s).into())),
-            vec![header, question, Value::list(answer, Span::unknown())],
+            vec![
+                header,
+                question,
+                Value::list(answer, Span::unknown()),
+                Value::list(authority, Span::unknown()),
+                Value::list(additional, Span::unknown()),
+            ],
             Span::unknown(),
         )
     }
