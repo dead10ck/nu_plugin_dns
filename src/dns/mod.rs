@@ -87,7 +87,23 @@ impl Dns {
             })?
             .into_inner();
 
-        Ok(Value::from(serde::Message(&message)))
+        let result = Value::record(
+            vec!["name_server".into(), "message".into()],
+            vec![
+                Value::record(
+                    vec!["address".into(), "protocol".into()],
+                    vec![
+                        Value::string(addr.to_string(), Span::unknown()),
+                        Value::string(protocol.to_string(), Span::unknown()),
+                    ],
+                    Span::unknown(),
+                ),
+                Value::from(serde::Message(&message)),
+            ],
+            Span::unknown(),
+        );
+
+        Ok(result)
     }
 }
 
