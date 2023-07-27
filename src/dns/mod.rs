@@ -120,29 +120,29 @@ impl Plugin for Dns {
         // It is possible to declare multiple signature in a plugin
         // Each signature will be converted to a command declaration once the
         // plugin is registered to nushell
-        vec![
-            // TODO
-            // PluginSignature::build("dns")
-            //     .usage("DNS utilities")
-            //     .category(Category::Network),
-            PluginSignature::build("dns query")
-                .usage("Perform a DNS query")
-                .required(
-                    "name",
-                    SyntaxShape::OneOf(vec![
-                        SyntaxShape::String,
-                        SyntaxShape::List(Box::new(SyntaxShape::Binary)),
-                    ]),
-                    "DNS record name",
-                )
-                // .optional("type", SyntaxShape::String, "Query type")
-                // .plugin_examples(vec![PluginExample {
-                //     example: "nu-example-1 3 bb".into(),
-                //     description: "running example with an int value and string value".into(),
-                //     result: None,
-                // }])
-                .category(Category::Network),
-        ]
+        vec![PluginSignature::build("dns query")
+            .usage("Perform a DNS query")
+            .required(
+                "name",
+                SyntaxShape::OneOf(vec![
+                    SyntaxShape::String,
+                    SyntaxShape::List(Box::new(SyntaxShape::Binary)),
+                ]),
+                "DNS record name",
+            )
+            .switch(
+                "code",
+                "Return code fields with both string and numeric representations",
+                Some('c'),
+            )
+            .named("qtype", SyntaxShape::String, "Query type", Some('t'))
+            .named("qclass", SyntaxShape::String, "Query class", Some('c'))
+            // .plugin_examples(vec![PluginExample {
+            //     example: "nu-example-1 3 bb".into(),
+            //     description: "running example with an int value and string value".into(),
+            //     result: None,
+            // }])
+            .category(Category::Network)]
     }
 
     fn run(
