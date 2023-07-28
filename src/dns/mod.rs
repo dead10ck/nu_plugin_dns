@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
 use nu_protocol::{Category, PluginSignature, Span, SyntaxShape, Value};
 use tokio::net::UdpSocket;
@@ -60,6 +62,64 @@ impl Dns {
             }
         };
 
+        let qtype_err = |err: ProtoError, span: Span| LabeledError {
+            label: "InvalidRecordType".into(),
+            msg: format!("Error parsing record type: {}", err),
+            span: Some(span),
+        };
+
+        let qtype: RecordType = match call.get_flag_value("type") {
+            Some(Value::String { val, span }) => {
+                RecordType::from_str(&val.to_uppercase()).map_err(|err| qtype_err(err, span))?
+            }
+            Some(Value::Int { val, span }) => {
+                let rtype = RecordType::from(val as u16);
+
+                if let RecordType::Unknown(r) = rtype {
+                    return Err(LabeledError {
+                        label: "InvalidRecordType".into(),
+                        msg: format!("Error parsing record type: unknown code: {}", r),
+                        span: Some(span),
+                    });
+                }
+
+                rtype
+            }
+            None => RecordType::A,
+            Some(value) => {
+                return Err(LabeledError {
+                    label: "InvalidRecordType".into(),
+                    msg: "Invalid type for record type argument. Must be either string or int."
+                        .into(),
+                    span: Some(value.span()?),
+                });
+            }
+        };
+
+        let class_err = |err: ProtoError, span: Span| LabeledError {
+            label: "InvalidDNSClass".into(),
+            msg: format!("Error parsing DNS class: {}", err),
+            span: Some(span),
+        };
+
+        let dns_class: DNSClass = match call.get_flag_value("class") {
+            Some(Value::String { val, span }) => {
+                DNSClass::from_str(&val.to_uppercase()).map_err(|err| class_err(err, span))?
+            }
+            Some(Value::Int { val, span }) => {
+                DNSClass::from_u16(val as u16).map_err(|err| class_err(err, span))?
+            }
+            None => DNSClass::IN,
+            Some(value) => {
+                return Err(LabeledError {
+                    label: "InvalidClassType".into(),
+                    msg: "Invalid type for class type argument. Must be either string or int."
+                        .into(),
+                    span: Some(value.span()?),
+                });
+            }
+        };
+
         let (mut client, bg) = match protocol {
             Protocol::Udp => {
                 let conn = UdpClientStream::<UdpSocket>::new(addr);
@@ -78,7 +138,7 @@ impl Dns {
         let _bg_handle = tokio::spawn(bg);
 
         let message = client
-            .query(name, DNSClass::IN, RecordType::A)
+            .query(name, dns_class, qtype)
             .await
             .map_err(|err| LabeledError {
                 label: "DNSResponseError".into(),
@@ -98,7 +158,7 @@ impl Dns {
                     ],
                     Span::unknown(),
                 ),
-                Value::from(serde::Message(&message)),
+                serde::Message(&message).into_value(call),
             ],
             Span::unknown(),
         );
@@ -135,8 +195,8 @@ impl Plugin for Dns {
                 "Return code fields with both string and numeric representations",
                 Some('c'),
             )
-            .named("qtype", SyntaxShape::String, "Query type", Some('t'))
-            .named("qclass", SyntaxShape::String, "Query class", Some('c'))
+            .named("type", SyntaxShape::Any, "Query type", Some('t'))
+            .named("class", SyntaxShape::Any, "Query class", None)
             // .plugin_examples(vec![PluginExample {
             //     example: "nu-example-1 3 bb".into(),
             //     description: "running example with an int value and string value".into(),
