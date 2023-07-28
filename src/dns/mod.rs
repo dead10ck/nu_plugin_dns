@@ -14,6 +14,8 @@ use trust_dns_resolver::{
     Name,
 };
 
+use self::serde::RType;
+
 mod nu;
 mod serde;
 
@@ -63,38 +65,16 @@ impl Dns {
             }
         };
 
-        let qtype_err = |err: ProtoError, span: Span| LabeledError {
-            label: "InvalidRecordType".into(),
-            msg: format!("Error parsing record type: {}", err),
-            span: Some(span),
-        };
-
-        let qtype: RecordType = match call.get_flag_value("type") {
-            Some(Value::String { val, span }) => {
-                RecordType::from_str(&val.to_uppercase()).map_err(|err| qtype_err(err, span))?
-            }
-            Some(Value::Int { val, span }) => {
-                let rtype = RecordType::from(val as u16);
-
-                if let RecordType::Unknown(r) = rtype {
-                    return Err(LabeledError {
-                        label: "InvalidRecordType".into(),
-                        msg: format!("Error parsing record type: unknown code: {}", r),
-                        span: Some(span),
-                    });
-                }
-
-                rtype
-            }
-            None => RecordType::A,
-            Some(value) => {
-                return Err(LabeledError {
-                    label: "InvalidRecordType".into(),
-                    msg: "Invalid type for record type argument. Must be either string or int."
-                        .into(),
-                    span: Some(value.span()?),
-                });
-            }
+        let qtypes: Vec<RecordType> = match call.get_flag_value("type") {
+            Some(Value::List { vals, .. }) => vals
+                .into_iter()
+                .map(RType::try_from)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|RType(rtype)| rtype)
+                .collect(),
+            Some(val) => vec![RType::try_from(val)?.0],
+            None => vec![RecordType::AAAA, RecordType::A],
         };
 
         let class_err = |err: ProtoError, span: Span| LabeledError {
@@ -137,16 +117,20 @@ impl Dns {
         };
 
         let _bg_handle = tokio::spawn(bg);
+        let mut messages = Vec::new();
 
-        let message = client
-            .query(name, dns_class, qtype)
-            .await
-            .map_err(|err| LabeledError {
-                label: "DNSResponseError".into(),
-                msg: format!("Error in DNS response: {}", err),
-                span: None,
-            })?
-            .into_inner();
+        for qtype in qtypes {
+            let resp = client
+                .query(name.clone(), dns_class, qtype)
+                .await
+                .map_err(|err| LabeledError {
+                    label: "DNSResponseError".into(),
+                    msg: format!("Error in DNS response: {}", err),
+                    span: None,
+                })?;
+
+            messages.push(serde::Message(&resp.into_inner()).into_value(call));
+        }
 
         let result = Value::record(
             vec!["name_server".into(), "message".into()],
@@ -159,7 +143,13 @@ impl Dns {
                     ],
                     Span::unknown(),
                 ),
-                serde::Message(&message).into_value(call),
+                match messages.len() {
+                    0 => Value::Nothing {
+                        span: Span::unknown(),
+                    },
+                    1 => messages.pop().unwrap(),
+                    _ => Value::list(messages, Span::unknown()),
+                }, // serde::Message(&message).into_value(call),
             ],
             Span::unknown(),
         );

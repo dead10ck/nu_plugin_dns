@@ -1,8 +1,12 @@
 use std::fmt::Display;
+use std::str::FromStr;
 
 use nu_plugin::EvaluatedCall;
+use nu_plugin::LabeledError;
 use nu_protocol::Span;
 use nu_protocol::Value;
+use trust_dns_proto::error::ProtoError;
+use trust_dns_proto::rr::RecordType;
 
 const MESSAGE_COLS: &[&str] = &["header", "question", "answer", "authority", "additional"];
 pub(crate) const HEADER_COLS: &[&str] = &[
@@ -194,5 +198,46 @@ impl<'r> Record<'r> {
             vec![name, rtype, class, ttl, rdata],
             Span::unknown(),
         )
+    }
+}
+
+pub struct RType(pub(crate) trust_dns_proto::rr::RecordType);
+
+impl TryFrom<Value> for RType {
+    type Error = LabeledError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        let qtype_err = |err: ProtoError, span: Span| LabeledError {
+            label: "InvalidRecordType".into(),
+            msg: format!("Error parsing record type: {}", err),
+            span: Some(span),
+        };
+
+        match value {
+            Value::String { val, span } => Ok(RType(
+                RecordType::from_str(&val.to_uppercase()).map_err(|err| qtype_err(err, span))?,
+            )),
+            Value::Int { val, span } => {
+                let rtype = RecordType::from(val as u16);
+
+                if let RecordType::Unknown(r) = rtype {
+                    return Err(LabeledError {
+                        label: "InvalidRecordType".into(),
+                        msg: format!("Error parsing record type: unknown code: {}", r),
+                        span: Some(span),
+                    });
+                }
+
+                Ok(RType(rtype))
+            }
+            value => {
+                return Err(LabeledError {
+                    label: "InvalidRecordType".into(),
+                    msg: "Invalid type for record type argument. Must be either string or int."
+                        .into(),
+                    span: Some(value.span()?),
+                });
+            }
+        }
     }
 }
