@@ -136,20 +136,22 @@ impl Dns {
             _ => todo!(),
         };
 
-        let mut messages = Vec::new();
-
-        for qtype in qtypes {
-            let resp = client
-                .query(name.clone(), dns_class, qtype)
-                .await
-                .map_err(|err| LabeledError {
-                    label: "DNSResponseError".into(),
-                    msg: format!("Error in DNS response: {}", err),
-                    span: None,
-                })?;
-
-            messages.push(serde::Message(&resp.into_inner()).into_value(call));
-        }
+        let mut messages: Vec<_> = futures_util::future::join_all(
+            qtypes
+                .into_iter()
+                .map(|qtype| client.query(name.clone(), dns_class, qtype)),
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| LabeledError {
+            label: "DNSResponseError".into(),
+            msg: format!("Error in DNS response: {}", err),
+            span: None,
+        })?
+        .into_iter()
+        .map(|resp| serde::Message(&resp.into_inner()).into_value(call))
+        .collect();
 
         let result = Value::record(
             vec!["name_server".into(), "message".into()],
