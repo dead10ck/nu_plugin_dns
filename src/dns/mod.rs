@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::{Span, Value};
 use tokio::net::UdpSocket;
@@ -77,28 +75,9 @@ impl Dns {
             None => vec![RecordType::AAAA, RecordType::A],
         };
 
-        let class_err = |err: ProtoError, span: Span| LabeledError {
-            label: "InvalidDNSClass".into(),
-            msg: format!("Error parsing DNS class: {}", err),
-            span: Some(span),
-        };
-
         let dns_class: DNSClass = match call.get_flag_value("class") {
-            Some(Value::String { val, span }) => {
-                DNSClass::from_str(&val.to_uppercase()).map_err(|err| class_err(err, span))?
-            }
-            Some(Value::Int { val, span }) => {
-                DNSClass::from_u16(val as u16).map_err(|err| class_err(err, span))?
-            }
+            Some(val) => serde::DNSClass::try_from(val)?.0,
             None => DNSClass::IN,
-            Some(value) => {
-                return Err(LabeledError {
-                    label: "InvalidClassType".into(),
-                    msg: "Invalid type for class type argument. Must be either string or int."
-                        .into(),
-                    span: Some(value.span()?),
-                });
-            }
         };
 
         let (mut client, bg) = match protocol {

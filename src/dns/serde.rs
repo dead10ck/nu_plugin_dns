@@ -230,14 +230,46 @@ impl TryFrom<Value> for RType {
 
                 Ok(RType(rtype))
             }
+            value => Err(LabeledError {
+                label: "InvalidRecordType".into(),
+                msg: "Invalid type for record type argument. Must be either string or int.".into(),
+                span: Some(value.span()?),
+            }),
+        }
+    }
+}
+
+pub struct DNSClass(pub(crate) trust_dns_proto::rr::DNSClass);
+
+impl TryFrom<Value> for DNSClass {
+    type Error = LabeledError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        let class_err = |err: ProtoError, span: Span| LabeledError {
+            label: "InvalidDNSClass".into(),
+            msg: format!("Error parsing DNS class: {}", err),
+            span: Some(span),
+        };
+
+        let dns_class: DNSClass = match value {
+            Value::String { val, span } => DNSClass(
+                trust_dns_proto::rr::DNSClass::from_str(&val.to_uppercase())
+                    .map_err(|err| class_err(err, span))?,
+            ),
+            Value::Int { val, span } => DNSClass(
+                trust_dns_proto::rr::DNSClass::from_u16(val as u16)
+                    .map_err(|err| class_err(err, span))?,
+            ),
             value => {
                 return Err(LabeledError {
-                    label: "InvalidRecordType".into(),
-                    msg: "Invalid type for record type argument. Must be either string or int."
+                    label: "InvalidClassType".into(),
+                    msg: "Invalid type for class type argument. Must be either string or int."
                         .into(),
                     span: Some(value.span()?),
                 });
             }
-        }
+        };
+
+        Ok(dns_class)
     }
 }
