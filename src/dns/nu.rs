@@ -23,6 +23,12 @@ impl Plugin for Dns {
                 "Return code fields with both string and numeric representations",
                 Some('c'),
             )
+            .named(
+                "server",
+                SyntaxShape::String,
+                "Nameserver to query (defaults to system config or 8.8.8.8)",
+                Some('s'),
+            )
             .named("type", SyntaxShape::Any, "Query type", Some('t'))
             .named("class", SyntaxShape::Any, "Query class", None)
             // .plugin_examples(vec![PluginExample {

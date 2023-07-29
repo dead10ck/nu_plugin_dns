@@ -1,3 +1,8 @@
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
+
 use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::{Span, Value};
 use tokio::net::UdpSocket;
@@ -53,14 +58,31 @@ impl Dns {
         };
 
         let name = name.map_err(|err| parse_name_err(err, name_span))?;
-        let (config, _) = trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
-        let (addr, protocol) = match config.name_servers() {
-            [ns, ..] => (ns.socket_addr, ns.protocol),
-            [] => {
-                let config = ResolverConfig::default();
-                let ns = config.name_servers().first().unwrap();
-                (ns.socket_addr, ns.protocol)
+        let (addr, protocol) = match call.get_flag_value("server") {
+            Some(Value::String { val, span }) => {
+                let addr = SocketAddr::from_str(&val)
+                    .or_else(|_| IpAddr::from_str(&val).map(|ip| SocketAddr::new(ip, 53)))
+                    .map_err(|err| LabeledError {
+                        label: "InvalidServerAddress".into(),
+                        msg: format!("Invalid server: {}", err),
+                        span: Some(span),
+                    })?;
+
+                (addr, Protocol::Udp)
             }
+            None => {
+                let (config, _) =
+                    trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
+                match config.name_servers() {
+                    [ns, ..] => (ns.socket_addr, ns.protocol),
+                    [] => {
+                        let config = ResolverConfig::default();
+                        let ns = config.name_servers().first().unwrap();
+                        (ns.socket_addr, ns.protocol)
+                    }
+                }
+            }
+            _ => unreachable!(),
         };
 
         let qtypes: Vec<RecordType> = match call.get_flag_value("type") {
