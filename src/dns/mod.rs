@@ -8,7 +8,9 @@ use nu_protocol::{Span, Value};
 use tokio::net::UdpSocket;
 use trust_dns_client::client::{AsyncClient, ClientHandle};
 use trust_dns_proto::{
+    iocompat::AsyncIoTokioAsStd,
     rr::{DNSClass, RecordType},
+    tcp::TcpClientStream,
     udp::UdpClientStream,
 };
 use trust_dns_resolver::{
@@ -58,7 +60,13 @@ impl Dns {
         };
 
         let name = name.map_err(|err| parse_name_err(err, name_span))?;
-        let (addr, protocol) = match call.get_flag_value("server") {
+
+        let protocol = match call.get_flag_value("protocol") {
+            None => None,
+            Some(val) => Some(serde::Protocol::try_from(val).map(|serde::Protocol(proto)| proto)?),
+        };
+
+        let (addr, addr_span, protocol) = match call.get_flag_value("server") {
             Some(Value::String { val, span }) => {
                 let addr = SocketAddr::from_str(&val)
                     .or_else(|_| IpAddr::from_str(&val).map(|ip| SocketAddr::new(ip, 53)))
@@ -68,17 +76,20 @@ impl Dns {
                         span: Some(span),
                     })?;
 
-                (addr, Protocol::Udp)
+                (addr, Some(span), protocol.unwrap_or(Protocol::Udp))
             }
             None => {
                 let (config, _) =
                     trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
                 match config.name_servers() {
-                    [ns, ..] => (ns.socket_addr, ns.protocol),
+                    [ns, ..] => (ns.socket_addr, None, ns.protocol),
                     [] => {
                         let config = ResolverConfig::default();
                         let ns = config.name_servers().first().unwrap();
-                        (ns.socket_addr, ns.protocol)
+
+                        // if protocol is explicitly configured, it should take
+                        // precedence over the system config
+                        (ns.socket_addr, None, protocol.unwrap_or(ns.protocol))
                     }
                 }
             }
@@ -102,22 +113,29 @@ impl Dns {
             None => DNSClass::IN,
         };
 
-        let (mut client, bg) = match protocol {
+        let connect_err = |err| LabeledError {
+            label: "ConnectError".into(),
+            msg: format!("Error creating client connection: {}", err),
+            span: addr_span,
+        };
+
+        let (mut client, _bg) = match protocol {
             Protocol::Udp => {
                 let conn = UdpClientStream::<UdpSocket>::new(addr);
-                AsyncClient::connect(conn)
-                    .await
-                    .map_err(|err| LabeledError {
-                        label: "UdpConnectError".into(),
-                        msg: format!("Error creating UDP client connection: {}", err),
-                        span: None,
-                    })?
+                let (client, bg) = AsyncClient::connect(conn).await.map_err(connect_err)?;
+                (client, tokio::spawn(bg))
             }
-            Protocol::Tcp => todo!(),
+            Protocol::Tcp => {
+                let (stream, sender) =
+                    TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
+                let (client, bg) = AsyncClient::new(stream, sender, None)
+                    .await
+                    .map_err(connect_err)?;
+                (client, tokio::spawn(bg))
+            }
             _ => todo!(),
         };
 
-        let _bg_handle = tokio::spawn(bg);
         let mut messages = Vec::new();
 
         for qtype in qtypes {

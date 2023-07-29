@@ -273,3 +273,34 @@ impl TryFrom<Value> for DNSClass {
         Ok(dns_class)
     }
 }
+
+pub struct Protocol(pub(crate) trust_dns_resolver::config::Protocol);
+
+impl TryFrom<Value> for Protocol {
+    type Error = LabeledError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        let result = match value {
+            Value::String { val, span } => match val.to_uppercase().as_str() {
+                "UDP" => Protocol(trust_dns_resolver::config::Protocol::Udp),
+                "TCP" => Protocol(trust_dns_resolver::config::Protocol::Tcp),
+                proto => {
+                    return Err(LabeledError {
+                        label: "InvalidProtocol".into(),
+                        msg: format!("Invalid or unsupported protocol: {proto}"),
+                        span: Some(span),
+                    })
+                }
+            },
+            _ => {
+                return Err(LabeledError {
+                    label: "InvalidInput".into(),
+                    msg: "Input must be a string".into(),
+                    span: Some(value.span()?),
+                })
+            }
+        };
+
+        Ok(result)
+    }
+}

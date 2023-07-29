@@ -29,6 +29,12 @@ impl Plugin for Dns {
                 "Nameserver to query (defaults to system config or 8.8.8.8)",
                 Some('s'),
             )
+            .named(
+                "protocol",
+                SyntaxShape::String,
+                "Protocol to use to connect to the nameserver (defaults to UDP)",
+                Some('p'),
+            )
             .named("type", SyntaxShape::Any, "Query type", Some('t'))
             .named("class", SyntaxShape::Any, "Query class", None)
             // .plugin_examples(vec![PluginExample {
