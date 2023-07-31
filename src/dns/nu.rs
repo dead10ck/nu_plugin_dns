@@ -18,11 +18,6 @@ impl Plugin for Dns {
                 ]),
                 "DNS record name",
             )
-            .switch(
-                "code",
-                "Return code fields with both string and numeric representations",
-                Some('c'),
-            )
             .named(
                 "server",
                 SyntaxShape::String,
@@ -32,11 +27,22 @@ impl Plugin for Dns {
             .named(
                 "protocol",
                 SyntaxShape::String,
-                "Protocol to use to connect to the nameserver (defaults to UDP)",
+                "Protocol to use to connect to the nameserver: UDP, TCP. (default: UDP)",
                 Some('p'),
             )
             .named("type", SyntaxShape::Any, "Query type", Some('t'))
             .named("class", SyntaxShape::Any, "Query class", None)
+            .switch(
+                "code",
+                "Return code fields with both string and numeric representations",
+                Some('c'),
+            )
+            .named(
+                "dnssec",
+                SyntaxShape::String,
+                r##"Perform DNSSEC validation on records. Choices are: "none", "strict" (error if record has no RRSIG or does not validate), "opportunistic" (validate if RRSIGs present, otherwise no validation; default)"##,
+                Some('d'),
+            )
             // .plugin_examples(vec![PluginExample {
             //     example: "nu-example-1 3 bb".into(),
             //     description: "running example with an int value and string value".into(),

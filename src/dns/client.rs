@@ -16,6 +16,8 @@ use trust_dns_proto::{
 };
 use trust_dns_resolver::config::Protocol;
 
+use super::serde::DnssecMode;
+
 type DnsHandleResponse =
     Pin<Box<(dyn Stream<Item = Result<DnsResponse, ProtoError>> + Send + 'static)>>;
 
@@ -28,8 +30,8 @@ type DnsHandleResponse =
 /// * https://github.com/bluejekyll/trust-dns/issues/1708
 #[derive(Clone)]
 pub struct DnsClient {
-    async_client: AsyncClient,
-    dnssec_client: AsyncDnssecClient,
+    async_client: Option<AsyncClient>,
+    dnssec_client: Option<AsyncDnssecClient>,
 }
 
 impl DnsClient {
@@ -37,6 +39,7 @@ impl DnsClient {
         addr: SocketAddr,
         addr_span: Option<Span>,
         protocol: Protocol,
+        dnssec_mode: DnssecMode,
     ) -> Result<(Self, JoinSet<Result<(), ProtoError>>), LabeledError> {
         let connect_err = |err| LabeledError {
             label: "ConnectError".into(),
@@ -48,32 +51,54 @@ impl DnsClient {
 
         let (async_client, dnssec_client) = match protocol {
             Protocol::Udp => {
-                let conn = UdpClientStream::<UdpSocket>::new(addr);
-                let (async_client, bg) = AsyncClient::connect(conn).await.map_err(connect_err)?;
-                join_set.spawn(bg);
+                let async_client = if dnssec_mode != DnssecMode::Strict {
+                    let conn = UdpClientStream::<UdpSocket>::new(addr);
+                    let (async_client, bg) =
+                        AsyncClient::connect(conn).await.map_err(connect_err)?;
+                    join_set.spawn(bg);
+                    Some(async_client)
+                } else {
+                    None
+                };
 
-                let conn = UdpClientStream::<UdpSocket>::new(addr);
-                let (dnssec_client, bg) = AsyncDnssecClient::connect(conn)
-                    .await
-                    .map_err(connect_err)?;
-                join_set.spawn(bg);
+                let dnssec_client = if dnssec_mode != DnssecMode::None {
+                    let conn = UdpClientStream::<UdpSocket>::new(addr);
+                    let (dnssec_client, bg) = AsyncDnssecClient::connect(conn)
+                        .await
+                        .map_err(connect_err)?;
+                    join_set.spawn(bg);
+                    Some(dnssec_client)
+                } else {
+                    None
+                };
 
                 (async_client, dnssec_client)
             }
             Protocol::Tcp => {
-                let (stream, sender) =
-                    TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
-                let conn = DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None);
-                let (async_client, bg) = AsyncClient::connect(conn).await.map_err(connect_err)?;
-                join_set.spawn(bg);
+                let async_client = if dnssec_mode != DnssecMode::Strict {
+                    let (stream, sender) =
+                        TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
+                    let conn = DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None);
+                    let (async_client, bg) =
+                        AsyncClient::connect(conn).await.map_err(connect_err)?;
+                    join_set.spawn(bg);
+                    Some(async_client)
+                } else {
+                    None
+                };
 
-                let (stream, sender) =
-                    TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
-                let conn = DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None);
-                let (dnssec_client, bg) = AsyncDnssecClient::connect(conn)
-                    .await
-                    .map_err(connect_err)?;
-                join_set.spawn(bg);
+                let dnssec_client = if dnssec_mode != DnssecMode::None {
+                    let (stream, sender) =
+                        TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
+                    let conn = DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None);
+                    let (dnssec_client, bg) = AsyncDnssecClient::connect(conn)
+                        .await
+                        .map_err(connect_err)?;
+                    join_set.spawn(bg);
+                    Some(dnssec_client)
+                } else {
+                    None
+                };
 
                 (async_client, dnssec_client)
             }
@@ -99,22 +124,30 @@ impl DnsHandle for DnsClient {
         R: Into<trust_dns_proto::xfer::DnsRequest> + Unpin + Send + 'static,
     {
         let request = request.into();
-        let dnssec_resp = Box::pin(self.dnssec_client.send(request.clone()));
-        let async_resp = Box::pin(self.async_client.send(request));
 
-        Box::pin(
-            dnssec_resp
-                .chain(async_resp)
-                .filter(|resp| {
-                    future::ready(!matches!(
-                        resp,
-                        Err(ProtoError {
-                            kind,
-                            ..
-                        }) if matches!(**kind, ProtoErrorKind::RrsigsNotPresent{..})
-                    ))
-                })
-                .take(1),
-        )
+        match (&mut self.async_client, &mut self.dnssec_client) {
+            (None, None) => unreachable!(),
+            (Some(async_client), None) => Box::pin(async_client.send(request)),
+            (None, Some(dnssec_client)) => Box::pin(dnssec_client.send(request)),
+            (Some(async_client), Some(dnssec_client)) => {
+                let dnssec_resp = Box::pin(dnssec_client.send(request.clone()));
+                let async_resp = Box::pin(async_client.send(request));
+
+                Box::pin(
+                    dnssec_resp
+                        .chain(async_resp)
+                        .filter(|resp| {
+                            future::ready(!matches!(
+                                resp,
+                                Err(ProtoError {
+                                    kind,
+                                    ..
+                                }) if matches!(**kind, ProtoErrorKind::RrsigsNotPresent{..})
+                            ))
+                        })
+                        .take(1),
+                )
+            }
+        }
     }
 }

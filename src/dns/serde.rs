@@ -304,3 +304,39 @@ impl TryFrom<Value> for Protocol {
         Ok(result)
     }
 }
+
+#[derive(Default, PartialEq)]
+pub enum DnssecMode {
+    None,
+    Strict,
+
+    #[default]
+    Opportunistic,
+}
+
+impl TryFrom<Value> for DnssecMode {
+    type Error = LabeledError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::String { val, span } => Ok(match val.to_uppercase().as_str() {
+                "NONE" => DnssecMode::None,
+                "STRICT" => DnssecMode::Strict,
+                "OPPORTUNISTIC" => DnssecMode::Opportunistic,
+                _ => {
+                    return Err(LabeledError {
+                        label: "InvalidDnssecModeError".into(),
+                        msg: "Invalid DNSSEC mode. Must be one of: none, strict, opportunistic"
+                            .into(),
+                        span: Some(span),
+                    });
+                }
+            }),
+            _ => Err(LabeledError {
+                label: "InvalidInputError".into(),
+                msg: "Input must be a string".into(),
+                span: Some(value.span()?),
+            }),
+        }
+    }
+}

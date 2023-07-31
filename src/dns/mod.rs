@@ -108,7 +108,12 @@ impl Dns {
             None => DNSClass::IN,
         };
 
-        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol).await?;
+        let dnssec_mode = match call.get_flag_value("dnssec") {
+            Some(val) => serde::DnssecMode::try_from(val)?,
+            None => serde::DnssecMode::Opportunistic,
+        };
+
+        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, dnssec_mode).await?;
 
         let mut messages: Vec<_> = futures_util::future::join_all(
             qtypes
