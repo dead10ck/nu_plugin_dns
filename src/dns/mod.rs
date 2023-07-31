@@ -5,22 +5,17 @@ use std::{
 
 use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::{Span, Value};
-use tokio::net::UdpSocket;
-use trust_dns_client::client::{AsyncClient, ClientHandle};
-use trust_dns_proto::{
-    iocompat::AsyncIoTokioAsStd,
-    rr::{DNSClass, RecordType},
-    tcp::TcpClientStream,
-    udp::UdpClientStream,
-};
+use trust_dns_client::client::ClientHandle;
+use trust_dns_proto::rr::{DNSClass, RecordType};
 use trust_dns_resolver::{
     config::{Protocol, ResolverConfig},
     proto::error::ProtoError,
     Name,
 };
 
-use self::serde::RType;
+use self::{client::DnsClient, serde::RType};
 
+mod client;
 mod nu;
 mod serde;
 
@@ -113,28 +108,7 @@ impl Dns {
             None => DNSClass::IN,
         };
 
-        let connect_err = |err| LabeledError {
-            label: "ConnectError".into(),
-            msg: format!("Error creating client connection: {}", err),
-            span: addr_span,
-        };
-
-        let (mut client, _bg) = match protocol {
-            Protocol::Udp => {
-                let conn = UdpClientStream::<UdpSocket>::new(addr);
-                let (client, bg) = AsyncClient::connect(conn).await.map_err(connect_err)?;
-                (client, tokio::spawn(bg))
-            }
-            Protocol::Tcp => {
-                let (stream, sender) =
-                    TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
-                let (client, bg) = AsyncClient::new(stream, sender, None)
-                    .await
-                    .map_err(connect_err)?;
-                (client, tokio::spawn(bg))
-            }
-            _ => todo!(),
-        };
+        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol).await?;
 
         let mut messages: Vec<_> = futures_util::future::join_all(
             qtypes
@@ -146,7 +120,7 @@ impl Dns {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| LabeledError {
             label: "DNSResponseError".into(),
-            msg: format!("Error in DNS response: {}", err),
+            msg: format!("Error in DNS response: {:?}", err),
             span: None,
         })?
         .into_iter()
