@@ -42,16 +42,30 @@ impl Dns {
         let (name, name_span) = match call.req(0)? {
             Value::String { val, span } => (Name::from_utf8(val), span),
             Value::List { vals, span } => (
-                Name::from_labels(vals.into_iter().map(|val| {
-                    if let Value::Binary { val: bin_val, .. } = val {
-                        bin_val
-                    } else {
-                        unreachable!("Invalid input type");
-                    }
-                })),
+                Name::from_labels(
+                    vals.into_iter()
+                        .map(|val| {
+                            if let Value::Binary { val: bin_val, .. } = val {
+                                Ok(bin_val)
+                            } else {
+                                Err(LabeledError {
+                                    label: "InvalidNameError".into(),
+                                    msg: "Invalid input type for name".into(),
+                                    span: Some(val.span()?),
+                                })
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
                 span,
             ),
-            _ => unreachable!("Invalid input type"),
+            val => {
+                return Err(LabeledError {
+                    label: "InvalidInputTypeError".into(),
+                    msg: "Invalid input type".into(),
+                    span: Some(val.span()?),
+                })
+            }
         };
 
         let name = name.map_err(|err| parse_name_err(err, name_span))?;
@@ -88,7 +102,13 @@ impl Dns {
                     }
                 }
             }
-            _ => unreachable!(),
+            Some(val) => {
+                return Err(LabeledError {
+                    label: "InvalidServerAddressInputError".into(),
+                    msg: "invalid input type for server address".into(),
+                    span: Some(val.span()?),
+                })
+            }
         };
 
         let qtypes: Vec<RecordType> = match call.get_flag_value("type") {
