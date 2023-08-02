@@ -142,7 +142,9 @@ impl DnsHandle for DnsClient {
                                 Err(ProtoError {
                                     kind,
                                     ..
-                                }) if matches!(**kind, ProtoErrorKind::RrsigsNotPresent{..})
+                                }) if matches!(**kind,
+                                    ProtoErrorKind::RrsigsNotPresent{..} |
+                                    ProtoErrorKind::Message("no results to verify"))
                             ))
                         })
                         .take(1),
