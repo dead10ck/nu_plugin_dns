@@ -135,7 +135,7 @@ impl Dns {
 
         let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, dnssec_mode).await?;
 
-        let mut messages: Vec<_> = futures_util::future::join_all(
+        let messages: Vec<_> = futures_util::future::join_all(
             qtypes
                 .into_iter()
                 .map(|qtype| client.query(name.clone(), dns_class, qtype)),
@@ -153,7 +153,7 @@ impl Dns {
         .collect();
 
         let result = Value::record(
-            vec!["name_server".into(), "message".into()],
+            vec!["name_server".into(), "messages".into()],
             vec![
                 Value::record(
                     vec!["address".into(), "protocol".into()],
@@ -163,13 +163,7 @@ impl Dns {
                     ],
                     Span::unknown(),
                 ),
-                match messages.len() {
-                    0 => Value::Nothing {
-                        span: Span::unknown(),
-                    },
-                    1 => messages.pop().unwrap(),
-                    _ => Value::list(messages, Span::unknown()),
-                }, // serde::Message(&message).into_value(call),
+                Value::list(messages, Span::unknown()),
             ],
             Span::unknown(),
         );
