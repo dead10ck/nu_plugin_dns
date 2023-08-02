@@ -9,7 +9,6 @@ use trust_dns_client::client::ClientHandle;
 use trust_dns_proto::rr::{DNSClass, RecordType};
 use trust_dns_resolver::{
     config::{Protocol, ResolverConfig},
-    proto::error::ProtoError,
     Name,
 };
 
@@ -39,10 +38,18 @@ impl Dns {
     }
 
     async fn query(&self, call: &EvaluatedCall, _input: &Value) -> Result<Value, LabeledError> {
-        let (name, name_span) = match call.req(0)? {
-            Value::String { val, span } => (Name::from_utf8(val), span),
-            Value::List { vals, span } => (
-                Name::from_labels(
+        let names = call
+            .rest(0)?
+            .into_iter()
+            .map(|input_name| match input_name {
+                Value::String { val, span } => {
+                    Ok(Name::from_utf8(val).map_err(|err| LabeledError {
+                        label: "InvalidNameError".into(),
+                        msg: format!("Error parsing name: {}", err),
+                        span: Some(span),
+                    })?)
+                }
+                Value::List { vals, span } => Ok(Name::from_labels(
                     vals.into_iter()
                         .map(|val| {
                             if let Value::Binary { val: bin_val, .. } = val {
@@ -56,19 +63,19 @@ impl Dns {
                             }
                         })
                         .collect::<Result<Vec<_>, _>>()?,
-                ),
-                span,
-            ),
-            val => {
-                return Err(LabeledError {
+                )
+                .map_err(|err| LabeledError {
+                    label: "NameParseError".into(),
+                    msg: format!("Error parsing into name: {}", err),
+                    span: Some(span),
+                })?),
+                val => Err(LabeledError {
                     label: "InvalidInputTypeError".into(),
                     msg: "Invalid input type".into(),
                     span: Some(val.span()?),
-                })
-            }
-        };
-
-        let name = name.map_err(|err| parse_name_err(err, name_span))?;
+                }),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let protocol = match call.get_flag_value("protocol") {
             None => None,
@@ -135,11 +142,12 @@ impl Dns {
 
         let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, dnssec_mode).await?;
 
-        let messages: Vec<_> = futures_util::future::join_all(
+        let messages: Vec<_> = futures_util::future::join_all(names.into_iter().flat_map(|name| {
             qtypes
-                .into_iter()
-                .map(|qtype| client.query(name.clone(), dns_class, qtype)),
-        )
+                .iter()
+                .map(|qtype| client.query(name.clone(), dns_class, *qtype))
+                .collect::<Vec<_>>()
+        }))
         .await
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
@@ -149,7 +157,9 @@ impl Dns {
             span: None,
         })?
         .into_iter()
-        .map(|resp| serde::Message(&resp.into_inner()).into_value(call))
+        .map(|resp: trust_dns_proto::xfer::DnsResponse| {
+            serde::Message(&resp.into_inner()).into_value(call)
+        })
         .collect();
 
         let result = Value::record(
@@ -169,13 +179,5 @@ impl Dns {
         );
 
         Ok(result)
-    }
-}
-
-fn parse_name_err(err: ProtoError, span: Span) -> LabeledError {
-    LabeledError {
-        label: "DnsNameParseError".into(),
-        msg: format!("Error parsing as DNS name: {}", err),
-        span: Some(span),
     }
 }

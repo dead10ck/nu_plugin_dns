@@ -10,7 +10,7 @@ impl Plugin for Dns {
         // plugin is registered to nushell
         vec![PluginSignature::build("dns query")
             .usage("Perform a DNS query")
-            .required(
+            .rest(
                 "name",
                 SyntaxShape::OneOf(vec![
                     SyntaxShape::String,
