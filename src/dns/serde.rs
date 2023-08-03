@@ -8,24 +8,7 @@ use nu_protocol::Value;
 use trust_dns_proto::error::ProtoError;
 use trust_dns_proto::rr::RecordType;
 
-const MESSAGE_COLS: &[&str] = &["header", "question", "answer", "authority", "additional"];
-pub(crate) const HEADER_COLS: &[&str] = &[
-    "id",
-    "message_type",
-    "op_code",
-    "authoritative",
-    "truncated",
-    "recusion_desired",
-    "recusion_available",
-    "authentic_data",
-    "response_code",
-    "query_count",
-    "answer_count",
-    "name_server_count",
-    "additional_count",
-];
-pub(crate) const QUERY_COLS: &[&str] = &["name", "type", "class"];
-pub(crate) const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata"];
+use super::constants;
 
 fn code_to_record_u16<C>(code: C, call: &EvaluatedCall) -> Value
 where
@@ -33,9 +16,13 @@ where
 {
     let code_string = Value::string(code.to_string(), Span::unknown());
 
-    if call.has_flag("code") {
+    if call.has_flag(constants::flags::CODE) {
         Value::record(
-            vec!["name".into(), "code".into()],
+            Vec::from_iter(
+                constants::columns::CODE_COLS
+                    .iter()
+                    .map(|s| String::from(*s)),
+            ),
             vec![
                 code_string,
                 Value::int(Into::<u16>::into(code) as i64, Span::unknown()),
@@ -53,9 +40,13 @@ where
 {
     let code_string = Value::string(code.to_string(), Span::unknown());
 
-    if call.has_flag("code") {
+    if call.has_flag(constants::flags::CODE) {
         Value::record(
-            vec!["name".into(), "code".into()],
+            Vec::from_iter(
+                constants::columns::CODE_COLS
+                    .iter()
+                    .map(|s| String::from(*s)),
+            ),
             vec![
                 code_string,
                 Value::int(Into::<u8>::into(code) as i64, Span::unknown()),
@@ -91,7 +82,7 @@ impl<'r> Message<'r> {
         let additional = parse_records(message.additionals());
 
         Value::record(
-            Vec::from_iter(MESSAGE_COLS.iter().map(|s| (*s).into())),
+            Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
             vec![
                 header,
                 question,
@@ -113,9 +104,13 @@ impl<'r> Header<'r> {
         let id = Value::int(header.id().into(), Span::unknown());
 
         let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
-        let message_type = if call.has_flag("code") {
+        let message_type = if call.has_flag(constants::flags::CODE) {
             Value::record(
-                vec!["name".into(), "code".into()],
+                Vec::from_iter(
+                    constants::columns::CODE_COLS
+                        .iter()
+                        .map(|s| String::from(*s)),
+                ),
                 vec![
                     message_type_string,
                     Value::int(header.message_type() as i64, Span::unknown()),
@@ -139,7 +134,7 @@ impl<'r> Header<'r> {
         let additional_count = Value::int(header.additional_count().into(), Span::unknown());
 
         Value::record(
-            Vec::from_iter(HEADER_COLS.iter().map(|s| (*s).into())),
+            Vec::from_iter(constants::columns::HEADER_COLS.iter().map(|s| (*s).into())),
             vec![
                 id,
                 message_type,
@@ -171,7 +166,7 @@ impl<'r> Query<'r> {
         let class = code_to_record_u16(query.query_class(), call);
 
         Value::record(
-            Vec::from_iter(QUERY_COLS.iter().map(|s| (*s).into())),
+            Vec::from_iter(constants::columns::QUERY_COLS.iter().map(|s| (*s).into())),
             vec![name, qtype, class],
             Span::unknown(),
         )
@@ -194,7 +189,7 @@ impl<'r> Record<'r> {
         };
 
         Value::record(
-            Vec::from_iter(RECORD_COLS.iter().map(|s| (*s).into())),
+            Vec::from_iter(constants::columns::RECORD_COLS.iter().map(|s| (*s).into())),
             vec![name, rtype, class, ttl, rdata],
             Span::unknown(),
         )

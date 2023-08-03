@@ -12,9 +12,10 @@ use trust_dns_resolver::{
     Name,
 };
 
-use self::{client::DnsClient, serde::RType};
+use self::{client::DnsClient, constants::flags, serde::RType};
 
 mod client;
+mod constants;
 mod nu;
 mod serde;
 
@@ -30,7 +31,7 @@ impl Dns {
         match name {
             "dns query" => self.query(call, input).await,
             _ => Err(LabeledError {
-                label: "No such command".into(),
+                label: "NoSuchCommandError".into(),
                 msg: "No such command".into(),
                 span: Some(call.head),
             }),
@@ -77,15 +78,18 @@ impl Dns {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let protocol = match call.get_flag_value("protocol") {
+        let protocol = match call.get_flag_value(flags::PROTOCOL) {
             None => None,
             Some(val) => Some(serde::Protocol::try_from(val).map(|serde::Protocol(proto)| proto)?),
         };
 
-        let (addr, addr_span, protocol) = match call.get_flag_value("server") {
+        let (addr, addr_span, protocol) = match call.get_flag_value(flags::SERVER) {
             Some(Value::String { val, span }) => {
                 let addr = SocketAddr::from_str(&val)
-                    .or_else(|_| IpAddr::from_str(&val).map(|ip| SocketAddr::new(ip, 53)))
+                    .or_else(|_| {
+                        IpAddr::from_str(&val)
+                            .map(|ip| SocketAddr::new(ip, constants::config::SERVER_PORT))
+                    })
                     .map_err(|err| LabeledError {
                         label: "InvalidServerAddress".into(),
                         msg: format!("Invalid server: {}", err),
@@ -118,7 +122,7 @@ impl Dns {
             }
         };
 
-        let qtypes: Vec<RecordType> = match call.get_flag_value("type") {
+        let qtypes: Vec<RecordType> = match call.get_flag_value(flags::TYPE) {
             Some(Value::List { vals, .. }) => vals
                 .into_iter()
                 .map(RType::try_from)
@@ -130,12 +134,12 @@ impl Dns {
             None => vec![RecordType::AAAA, RecordType::A],
         };
 
-        let dns_class: DNSClass = match call.get_flag_value("class") {
+        let dns_class: DNSClass = match call.get_flag_value(flags::CLASS) {
             Some(val) => serde::DNSClass::try_from(val)?.0,
             None => DNSClass::IN,
         };
 
-        let dnssec_mode = match call.get_flag_value("dnssec") {
+        let dnssec_mode = match call.get_flag_value(flags::DNSSEC) {
             Some(val) => serde::DnssecMode::try_from(val)?,
             None => serde::DnssecMode::Opportunistic,
         };
@@ -163,10 +167,16 @@ impl Dns {
         .collect();
 
         let result = Value::record(
-            vec!["name_server".into(), "messages".into()],
+            vec![
+                constants::columns::NAMESERVER.into(),
+                constants::columns::MESSAGES.into(),
+            ],
             vec![
                 Value::record(
-                    vec!["address".into(), "protocol".into()],
+                    vec![
+                        constants::columns::ADDRESS.into(),
+                        constants::columns::PROTOCOL.into(),
+                    ],
                     vec![
                         Value::string(addr.to_string(), Span::unknown()),
                         Value::string(protocol.to_string(), Span::unknown()),

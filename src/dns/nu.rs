@@ -1,6 +1,8 @@
 use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
 use nu_protocol::{Category, PluginSignature, SyntaxShape, Value};
 
+use crate::dns::constants;
+
 use super::Dns;
 
 impl Plugin for Dns {
@@ -11,7 +13,7 @@ impl Plugin for Dns {
         vec![PluginSignature::build("dns query")
             .usage("Perform a DNS query")
             .rest(
-                "name",
+                constants::flags::NAME,
                 SyntaxShape::OneOf(vec![
                     SyntaxShape::String,
                     SyntaxShape::List(Box::new(SyntaxShape::Binary)),
@@ -19,26 +21,26 @@ impl Plugin for Dns {
                 "DNS record name",
             )
             .named(
-                "server",
+                constants::flags::SERVER,
                 SyntaxShape::String,
                 "Nameserver to query (defaults to system config or 8.8.8.8)",
                 Some('s'),
             )
             .named(
-                "protocol",
+                constants::flags::PROTOCOL,
                 SyntaxShape::String,
                 "Protocol to use to connect to the nameserver: UDP, TCP. (default: UDP)",
                 Some('p'),
             )
-            .named("type", SyntaxShape::Any, "Query type", Some('t'))
-            .named("class", SyntaxShape::Any, "Query class", None)
+            .named(constants::flags::TYPE, SyntaxShape::Any, "Query type", Some('t'))
+            .named(constants::flags::CLASS, SyntaxShape::Any, "Query class", None)
             .switch(
-                "code",
+                constants::flags::CODE,
                 "Return code fields with both string and numeric representations",
                 Some('c'),
             )
             .named(
-                "dnssec",
+                constants::flags::DNSSEC,
                 SyntaxShape::String,
                 r##"Perform DNSSEC validation on records. Choices are: "none", "strict" (error if record has no RRSIG or does not validate), "opportunistic" (validate if RRSIGs present, otherwise no validation; default)"##,
                 Some('d'),
