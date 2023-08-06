@@ -38,23 +38,38 @@ impl Dns {
         }
     }
 
-    async fn query(&self, call: &EvaluatedCall, _input: &Value) -> Result<Value, LabeledError> {
-        let names = call
-            .rest(0)?
+    async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
+        let arg_inputs: Vec<Value> = call.rest(0)?;
+        let input: Vec<&Value> = match input {
+            Value::Nothing { .. } => arg_inputs.iter().collect(),
+            val => {
+                if !arg_inputs.is_empty() {
+                    return Err(LabeledError {
+                        label: "AmbiguousInputError".into(),
+                        msg: "Input should either be positional args or piped, but not both".into(),
+                        span: Some(val.span()?),
+                    });
+                }
+
+                vec![val]
+            }
+        };
+
+        let names = input
             .into_iter()
             .map(|input_name| match input_name {
                 Value::String { val, span } => {
                     Ok(Name::from_utf8(val).map_err(|err| LabeledError {
                         label: "InvalidNameError".into(),
                         msg: format!("Error parsing name: {}", err),
-                        span: Some(span),
+                        span: Some(*span),
                     })?)
                 }
                 Value::List { vals, span } => Ok(Name::from_labels(
-                    vals.into_iter()
+                    vals.iter()
                         .map(|val| {
                             if let Value::Binary { val: bin_val, .. } = val {
-                                Ok(bin_val)
+                                Ok(bin_val.clone())
                             } else {
                                 Err(LabeledError {
                                     label: "InvalidNameError".into(),
@@ -68,7 +83,7 @@ impl Dns {
                 .map_err(|err| LabeledError {
                     label: "NameParseError".into(),
                     msg: format!("Error parsing into name: {}", err),
-                    span: Some(span),
+                    span: Some(*span),
                 })?),
                 val => Err(LabeledError {
                     label: "InvalidInputTypeError".into(),
