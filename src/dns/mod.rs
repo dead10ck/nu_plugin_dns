@@ -38,6 +38,56 @@ impl Dns {
         }
     }
 
+    fn get_name(val: &Value) -> Result<Name, LabeledError> {
+        match val {
+            Value::String { val, span } => {
+                Ok(Name::from_utf8(val).map_err(|err| LabeledError {
+                    label: "InvalidNameError".into(),
+                    msg: format!("Error parsing name: {}", err),
+                    span: Some(*span),
+                })?)
+            }
+            Value::List { vals, span } => Ok(Name::from_labels(
+                vals.iter()
+                    .map(|val| match val {
+                        Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
+                        _ => Err(LabeledError {
+                            label: "InvalidNameError".into(),
+                            msg: "Invalid input type for name".into(),
+                            span: Some(val.span()?),
+                        }),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+            .map_err(|err| LabeledError {
+                label: "NameParseError".into(),
+                msg: format!("Error parsing into name: {}", err),
+                span: Some(*span),
+            })?),
+            val => Err(LabeledError {
+                label: "InvalidInputTypeError".into(),
+                msg: "Invalid input type".into(),
+                span: Some(val.span()?),
+            }),
+        }
+    }
+
+    fn get_names(vals: &[&Value]) -> Result<Vec<Name>, LabeledError> {
+        vals.iter()
+            .map(|input_val| match input_val {
+                Value::List { vals, .. } => {
+                    if vals.iter().all(|val| matches!(val, Value::Binary { .. })) {
+                        return Dns::get_name(input_val).map(|name| vec![name]);
+                    }
+
+                    Dns::get_names(&vals.iter().collect::<Vec<_>>())
+                }
+                _ => Dns::get_name(input_val).map(|name| vec![name]),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|res| res.into_iter().flatten().collect())
+    }
+
     async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
         let arg_inputs: Vec<Value> = call.rest(0)?;
         let input: Vec<&Value> = match input {
@@ -55,43 +105,7 @@ impl Dns {
             }
         };
 
-        let names = input
-            .into_iter()
-            .map(|input_name| match input_name {
-                Value::String { val, span } => {
-                    Ok(Name::from_utf8(val).map_err(|err| LabeledError {
-                        label: "InvalidNameError".into(),
-                        msg: format!("Error parsing name: {}", err),
-                        span: Some(*span),
-                    })?)
-                }
-                Value::List { vals, span } => Ok(Name::from_labels(
-                    vals.iter()
-                        .map(|val| {
-                            if let Value::Binary { val: bin_val, .. } = val {
-                                Ok(bin_val.clone())
-                            } else {
-                                Err(LabeledError {
-                                    label: "InvalidNameError".into(),
-                                    msg: "Invalid input type for name".into(),
-                                    span: Some(val.span()?),
-                                })
-                            }
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-                .map_err(|err| LabeledError {
-                    label: "NameParseError".into(),
-                    msg: format!("Error parsing into name: {}", err),
-                    span: Some(*span),
-                })?),
-                val => Err(LabeledError {
-                    label: "InvalidInputTypeError".into(),
-                    msg: "Invalid input type".into(),
-                    span: Some(val.span()?),
-                }),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let names = Dns::get_names(&input)?;
 
         let protocol = match call.get_flag_value(flags::PROTOCOL) {
             None => None,
