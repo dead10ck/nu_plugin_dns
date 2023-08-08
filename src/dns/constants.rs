@@ -13,6 +13,10 @@ pub mod config {
 }
 
 pub mod columns {
+    pub const NAME: &str = "name";
+    pub const TYPE: &str = "type";
+    pub const CLASS: &str = "class";
+
     pub const NAMESERVER: &str = "nameserver";
     pub const MESSAGES: &str = "messages";
     pub const ADDRESS: &str = "address";

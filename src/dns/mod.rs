@@ -5,14 +5,11 @@ use std::{
 
 use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::{Span, Value};
-use trust_dns_client::client::ClientHandle;
-use trust_dns_proto::rr::{DNSClass, RecordType};
-use trust_dns_resolver::{
-    config::{Protocol, ResolverConfig},
-    Name,
-};
 
-use self::{client::DnsClient, constants::flags, serde::RType};
+use trust_dns_client::client::ClientHandle;
+use trust_dns_resolver::config::{Protocol, ResolverConfig};
+
+use self::{client::DnsClient, constants::flags, serde::Query};
 
 mod client;
 mod constants;
@@ -38,51 +35,17 @@ impl Dns {
         }
     }
 
-    fn get_name(val: &Value) -> Result<Name, LabeledError> {
-        match val {
-            Value::String { val, span } => {
-                Ok(Name::from_utf8(val).map_err(|err| LabeledError {
-                    label: "InvalidNameError".into(),
-                    msg: format!("Error parsing name: {}", err),
-                    span: Some(*span),
-                })?)
-            }
-            Value::List { vals, span } => Ok(Name::from_labels(
-                vals.iter()
-                    .map(|val| match val {
-                        Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
-                        _ => Err(LabeledError {
-                            label: "InvalidNameError".into(),
-                            msg: "Invalid input type for name".into(),
-                            span: Some(val.span()?),
-                        }),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-            .map_err(|err| LabeledError {
-                label: "NameParseError".into(),
-                msg: format!("Error parsing into name: {}", err),
-                span: Some(*span),
-            })?),
-            val => Err(LabeledError {
-                label: "InvalidInputTypeError".into(),
-                msg: "Invalid input type".into(),
-                span: Some(val.span()?),
-            }),
-        }
-    }
-
-    fn get_names(vals: &[&Value]) -> Result<Vec<Name>, LabeledError> {
+    fn get_queries(vals: &[&Value], call: &EvaluatedCall) -> Result<Vec<Query>, LabeledError> {
         vals.iter()
             .map(|input_val| match input_val {
                 Value::List { vals, .. } => {
                     if vals.iter().all(|val| matches!(val, Value::Binary { .. })) {
-                        return Dns::get_name(input_val).map(|name| vec![name]);
+                        return Query::try_from_value(input_val, call);
                     }
 
-                    Dns::get_names(&vals.iter().collect::<Vec<_>>())
+                    Dns::get_queries(&vals.iter().collect::<Vec<_>>(), call)
                 }
-                _ => Dns::get_name(input_val).map(|name| vec![name]),
+                _ => Query::try_from_value(input_val, call),
             })
             .collect::<Result<Vec<_>, _>>()
             .map(|res| res.into_iter().flatten().collect())
@@ -104,8 +67,6 @@ impl Dns {
                 vec![val]
             }
         };
-
-        let names = Dns::get_names(&input)?;
 
         let protocol = match call.get_flag_value(flags::PROTOCOL) {
             None => None,
@@ -151,22 +112,7 @@ impl Dns {
             }
         };
 
-        let qtypes: Vec<RecordType> = match call.get_flag_value(flags::TYPE) {
-            Some(Value::List { vals, .. }) => vals
-                .into_iter()
-                .map(RType::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|RType(rtype)| rtype)
-                .collect(),
-            Some(val) => vec![RType::try_from(val)?.0],
-            None => vec![RecordType::AAAA, RecordType::A],
-        };
-
-        let dns_class: DNSClass = match call.get_flag_value(flags::CLASS) {
-            Some(val) => serde::DNSClass::try_from(val)?.0,
-            None => DNSClass::IN,
-        };
+        let queries: Vec<Query> = Dns::get_queries(&input, call)?;
 
         let dnssec_mode = match call.get_flag_value(flags::DNSSEC) {
             Some(val) => serde::DnssecMode::try_from(val)?,
@@ -175,11 +121,9 @@ impl Dns {
 
         let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, dnssec_mode).await?;
 
-        let messages: Vec<_> = futures_util::future::join_all(names.into_iter().flat_map(|name| {
-            qtypes
-                .iter()
-                .map(|qtype| client.query(name.clone(), dns_class, *qtype))
-                .collect::<Vec<_>>()
+        let messages: Vec<_> = futures_util::future::join_all(queries.into_iter().map(|query| {
+            let parts = query.0.into_parts();
+            client.query(parts.name, parts.query_class, parts.query_type)
         }))
         .await
         .into_iter()
@@ -191,7 +135,7 @@ impl Dns {
         })?
         .into_iter()
         .map(|resp: trust_dns_proto::xfer::DnsResponse| {
-            serde::Message(&resp.into_inner()).into_value(call)
+            serde::Message(resp.into_inner()).into_value(call)
         })
         .collect();
 

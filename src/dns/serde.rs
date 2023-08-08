@@ -3,10 +3,12 @@ use std::str::FromStr;
 
 use nu_plugin::EvaluatedCall;
 use nu_plugin::LabeledError;
+use nu_protocol::FromValue;
 use nu_protocol::Span;
 use nu_protocol::Value;
 use trust_dns_proto::error::ProtoError;
 use trust_dns_proto::rr::RecordType;
+use trust_dns_resolver::Name;
 
 use super::constants;
 
@@ -58,14 +60,15 @@ where
     }
 }
 
-pub struct Message<'r>(pub(crate) &'r trust_dns_proto::op::Message);
+pub struct Message(pub(crate) trust_dns_proto::op::Message);
 
-impl<'r> Message<'r> {
+impl Message {
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
         let Message(message) = self;
         let header = Header(message.header()).into_value(call);
+        let mut parts = message.into_parts();
 
-        let question = message.query().map_or_else(
+        let question = parts.queries.pop().map_or_else(
             || Value::record(Vec::default(), Vec::default(), Span::unknown()),
             |q| Query(q).into_value(call),
         );
@@ -77,9 +80,9 @@ impl<'r> Message<'r> {
                 .collect()
         };
 
-        let answer = parse_records(message.answers());
-        let authority = parse_records(message.name_servers());
-        let additional = parse_records(message.additionals());
+        let answer = parse_records(&parts.answers);
+        let authority = parse_records(&parts.name_servers);
+        let additional = parse_records(&parts.additionals);
 
         Value::record(
             Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
@@ -155,9 +158,9 @@ impl<'r> Header<'r> {
     }
 }
 
-pub struct Query<'r>(pub(crate) &'r trust_dns_proto::op::query::Query);
+pub struct Query(pub(crate) trust_dns_proto::op::query::Query);
 
-impl<'r> Query<'r> {
+impl Query {
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
         let Query(query) = self;
 
@@ -170,6 +173,129 @@ impl<'r> Query<'r> {
             vec![name, qtype, class],
             Span::unknown(),
         )
+    }
+}
+
+impl Query {
+    pub fn try_from_value(value: &Value, call: &EvaluatedCall) -> Result<Vec<Self>, LabeledError> {
+        let qtypes: Vec<RecordType> = match call.get_flag_value(constants::flags::TYPE) {
+            Some(Value::List { vals, .. }) => vals
+                .into_iter()
+                .map(RType::try_from)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|RType(rtype)| rtype)
+                .collect(),
+            Some(val) => vec![RType::try_from(val)?.0],
+            None => vec![RecordType::AAAA, RecordType::A],
+        };
+
+        let dns_class: trust_dns_proto::rr::DNSClass =
+            match call.get_flag_value(constants::flags::CLASS) {
+                Some(val) => DNSClass::try_from(val)?.0,
+                None => trust_dns_proto::rr::DNSClass::IN,
+            };
+
+        match value {
+            // If a record is given, it must have at least a name and qtype and
+            // will be used as is, overriding any command line arguments.
+            rec @ Value::Record { span, .. } => {
+                let must_have_col_err = |col| LabeledError {
+                    label: "InvalidInputError".into(),
+                    msg: format!("Record must have a column named '{}'", col),
+                    span: Some(*span),
+                };
+
+                let name = Name::from_utf8(
+                    String::from_value(
+                        &rec.get_data_by_key(constants::columns::NAME)
+                            .ok_or_else(|| must_have_col_err(constants::columns::NAME))?,
+                    )
+                    .map_err(|err| LabeledError {
+                        label: "InvalidValueError".into(),
+                        msg: format!("Could not convert value to String: {}", err),
+                        span: Some(*span),
+                    })?,
+                )
+                .map_err(|err| LabeledError {
+                    label: "InvalidNameError".into(),
+                    msg: format!("Could not convert string to name: {}", err),
+                    span: Some(*span),
+                })?;
+
+                let qtype = RType::try_from(
+                    rec.get_data_by_key(constants::columns::TYPE)
+                        .ok_or_else(|| must_have_col_err(constants::columns::TYPE))?,
+                )?;
+
+                let class = rec
+                    .get_data_by_key(constants::columns::CLASS)
+                    .map(DNSClass::try_from)
+                    .unwrap_or(Ok(DNSClass(trust_dns_proto::rr::DNSClass::IN)))?
+                    .0;
+
+                let mut query = trust_dns_proto::op::Query::query(name, qtype.0);
+                query.set_query_class(class);
+
+                Ok(vec![Query(query)])
+            }
+
+            // If any other input type is given, the CLI flags fill in the type
+            // and class.
+            Value::String { val, span } => {
+                let name = Name::from_utf8(val).map_err(|err| LabeledError {
+                    label: "InvalidNameError".into(),
+                    msg: format!("Error parsing name: {}", err),
+                    span: Some(*span),
+                })?;
+
+                let queries = qtypes
+                    .into_iter()
+                    .map(|qtype| {
+                        let mut query = trust_dns_proto::op::Query::query(name.clone(), qtype);
+                        query.set_query_class(dns_class);
+                        Query(query)
+                    })
+                    .collect();
+
+                Ok(queries)
+            }
+            Value::List { vals, span } => {
+                let name = Name::from_labels(
+                    vals.iter()
+                        .map(|val| match val {
+                            Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
+                            _ => Err(LabeledError {
+                                label: "InvalidNameError".into(),
+                                msg: "Invalid input type for name".into(),
+                                span: Some(val.span()?),
+                            }),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+                .map_err(|err| LabeledError {
+                    label: "NameParseError".into(),
+                    msg: format!("Error parsing into name: {}", err),
+                    span: Some(*span),
+                })?;
+
+                let queries = qtypes
+                    .into_iter()
+                    .map(|qtype| {
+                        let mut query = trust_dns_proto::op::Query::query(name.clone(), qtype);
+                        query.set_query_class(dns_class);
+                        Query(query)
+                    })
+                    .collect();
+
+                Ok(queries)
+            }
+            val => Err(LabeledError {
+                label: "InvalidInputTypeError".into(),
+                msg: "Invalid input type".into(),
+                span: Some(val.span()?),
+            }),
+        }
     }
 }
 
