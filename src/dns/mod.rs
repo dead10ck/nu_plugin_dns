@@ -26,7 +26,7 @@ impl Dns {
         input: &Value,
     ) -> Result<Value, LabeledError> {
         match name {
-            "dns query" => self.query(call, input).await,
+            constants::commands::QUERY => self.query(call, input).await,
             _ => Err(LabeledError {
                 label: "NoSuchCommandError".into(),
                 msg: "No such command".into(),

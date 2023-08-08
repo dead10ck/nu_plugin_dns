@@ -1,3 +1,7 @@
+pub mod commands {
+    pub const QUERY: &str = "dns query";
+}
+
 pub mod flags {
     pub const NAME: &str = "name";
     pub const SERVER: &str = "server";

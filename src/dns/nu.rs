@@ -1,5 +1,5 @@
 use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
-use nu_protocol::{Category, PluginSignature, SyntaxShape, Value};
+use nu_protocol::{Category, PluginExample, PluginSignature, SyntaxShape, Value};
 
 use crate::dns::constants;
 
@@ -10,7 +10,7 @@ impl Plugin for Dns {
         // It is possible to declare multiple signature in a plugin
         // Each signature will be converted to a command declaration once the
         // plugin is registered to nushell
-        vec![PluginSignature::build("dns query")
+        vec![PluginSignature::build(constants::commands::QUERY)
             .usage("Perform a DNS query")
             .rest(
                 constants::flags::NAME,
@@ -45,11 +45,43 @@ impl Plugin for Dns {
                 r##"Perform DNSSEC validation on records. Choices are: "none", "strict" (error if record has no RRSIG or does not validate), "opportunistic" (validate if RRSIGs present, otherwise no validation; default)"##,
                 Some('d'),
             )
-            // .plugin_examples(vec![PluginExample {
-            //     example: "nu-example-1 3 bb".into(),
-            //     description: "running example with an int value and string value".into(),
-            //     result: None,
-            // }])
+            .plugin_examples(vec![
+                PluginExample {
+                    example: format!("{} google.com", constants::commands::QUERY),
+                    description: "simple query for A / AAAA records".into(),
+                    result: None,
+                },
+                PluginExample {
+                    example: format!("{} --type CNAME google.com", constants::commands::QUERY),
+                    description: "specify query type".into(),
+                    result: None,
+                },
+                PluginExample {
+                    example: format!("{} --type [cname, mx] -c google.com", constants::commands::QUERY),
+                    description: "specify multiple query types".into(),
+                    result: None,
+                },
+                PluginExample {
+                    example: format!("{} --type [5, 15] -c google.com", constants::commands::QUERY),
+                    description: "specify query types by numeric ID, and get numeric IDs in output".into(),
+                    result: None,
+                },
+                PluginExample {
+                    example: format!("'google.com' | {}", constants::commands::QUERY),
+                    description: "pipe name into command".into(),
+                    result: None,
+                },
+                PluginExample {
+                    example: format!("['google.com', 'amazon.com'] | {}", constants::commands::QUERY),
+                    description: "pipe lists of names into command".into(),
+                    result: None,
+                },
+                PluginExample {
+                    example: format!("[{{name: 'google.com', type: 'A'}}, {{name: 'amazon.com', type: 'A'}}] | {}", constants::commands::QUERY),
+                    description: "pipe table of queries into command (ignores --type flag)".into(),
+                    result: None,
+                },
+            ])
             .category(Category::Network)]
     }
 
