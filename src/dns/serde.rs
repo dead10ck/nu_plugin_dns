@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::str::FromStr;
 
@@ -6,7 +7,16 @@ use nu_plugin::LabeledError;
 use nu_protocol::FromValue;
 use nu_protocol::Span;
 use nu_protocol::Value;
+use trust_dns_client::rr::dnssec;
+use trust_dns_client::rr::rdata::key;
+use trust_dns_client::rr::rdata::DNSSECRData;
 use trust_dns_proto::error::ProtoError;
+use trust_dns_proto::rr::rdata::sshfp;
+use trust_dns_proto::rr::rdata::svcb::EchConfig;
+use trust_dns_proto::rr::rdata::svcb::IpHint;
+use trust_dns_proto::rr::rdata::svcb::SvcParamValue;
+use trust_dns_proto::rr::rdata::svcb::Unknown;
+use trust_dns_proto::rr::rdata::tlsa;
 use trust_dns_proto::rr::RecordType;
 use trust_dns_resolver::Name;
 
@@ -73,16 +83,16 @@ impl Message {
             |q| Query(q).into_value(call),
         );
 
-        let parse_records = |records: &[trust_dns_client::rr::Record]| {
+        let parse_records = |records: Vec<trust_dns_client::rr::Record>| {
             records
-                .iter()
+                .into_iter()
                 .map(|record| Record(record).into_value(call))
                 .collect()
         };
 
-        let answer = parse_records(&parts.answers);
-        let authority = parse_records(&parts.name_servers);
-        let additional = parse_records(&parts.additionals);
+        let answer = parse_records(parts.answers);
+        let authority = parse_records(parts.name_servers);
+        let additional = parse_records(parts.additionals);
 
         Value::record(
             Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
@@ -299,18 +309,19 @@ impl Query {
     }
 }
 
-pub struct Record<'r>(pub(crate) &'r trust_dns_proto::rr::resource::Record);
+pub struct Record(pub(crate) trust_dns_proto::rr::resource::Record);
 
-impl<'r> Record<'r> {
+impl Record {
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
         let Record(record) = self;
+        let parts = record.into_parts();
 
-        let name = Value::string(record.name().to_utf8(), Span::unknown());
-        let rtype = code_to_record_u16(record.rr_type(), call);
-        let class = code_to_record_u16(record.dns_class(), call);
-        let ttl = Value::int(record.ttl() as i64, Span::unknown());
-        let rdata = match record.data() {
-            Some(data) => Value::string(data.to_string(), Span::unknown()),
+        let name = Value::string(parts.name_labels.to_utf8(), Span::unknown());
+        let rtype = code_to_record_u16(parts.rr_type, call);
+        let class = code_to_record_u16(parts.dns_class, call);
+        let ttl = Value::int(parts.ttl as i64, Span::unknown());
+        let rdata = match parts.rdata {
+            Some(data) => RData(data).into_value(call),
             None => Value::nothing(Span::unknown()),
         };
 
@@ -319,6 +330,618 @@ impl<'r> Record<'r> {
             vec![name, rtype, class, ttl, rdata],
             Span::unknown(),
         )
+    }
+}
+
+pub struct RData(pub(crate) trust_dns_proto::rr::RData);
+
+impl RData {
+    pub fn into_value(self, _call: &EvaluatedCall) -> Value {
+        match self.0 {
+            trust_dns_proto::rr::RData::CAA(caa) => {
+                let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
+                let tag = Value::string(caa.tag().as_str(), Span::unknown());
+                let value = match caa.value() {
+                    trust_dns_proto::rr::rdata::caa::Value::Issuer(issuer_name, key_values) => {
+                        let issuer_name = issuer_name
+                            .as_ref()
+                            .map(|name| Value::string(name.to_string(), Span::unknown()))
+                            .unwrap_or(Value::nothing(Span::unknown()));
+
+                        let parameters: HashMap<String, Value> = key_values
+                            .iter()
+                            .map(|key_val| {
+                                (
+                                    key_val.key().into(),
+                                    Value::string(key_val.value(), Span::unknown()),
+                                )
+                            })
+                            .collect();
+
+                        Value::record(
+                            vec!["issuer_name".into(), "parameters".into()],
+                            vec![
+                                issuer_name,
+                                Value::record_from_hashmap(&parameters, Span::unknown()),
+                            ],
+                            Span::unknown(),
+                        )
+                    }
+                    trust_dns_proto::rr::rdata::caa::Value::Url(url) => {
+                        Value::string(url.to_string(), Span::unknown())
+                    }
+                    trust_dns_proto::rr::rdata::caa::Value::Unknown(data) => {
+                        Value::binary(data.clone(), Span::unknown())
+                    }
+                };
+
+                Value::record(
+                    vec!["issuer_critical".into(), "tag".into(), "value".into()],
+                    vec![issuer_ctitical, tag, value],
+                    Span::unknown(),
+                )
+            }
+            // CSYNC seems to be missing some accessors in the trust-dns lib,
+            // which oddly enough actually are serialized in the `Display` impl,
+            // so just use that
+            // trust_dns_proto::rr::RData::CSYNC(_) => todo!(),
+            trust_dns_proto::rr::RData::HINFO(hinfo) => {
+                let cpu = util::string_or_binary(hinfo.cpu());
+                let os = util::string_or_binary(hinfo.os());
+
+                Value::record(
+                    vec!["cpu".into(), "os".into()],
+                    vec![cpu, os],
+                    Span::unknown(),
+                )
+            }
+
+            trust_dns_proto::rr::RData::HTTPS(svcb) | trust_dns_proto::rr::RData::SVCB(svcb) => {
+                let svc_priority = Value::int(svcb.svc_priority() as i64, Span::unknown());
+                let target_name = Value::string(svcb.target_name().to_string(), Span::unknown());
+                let (svc_params_cols, svc_params_vals) = svcb.svc_params().iter().fold(
+                    (Vec::new(), Vec::new()),
+                    |(mut columns, mut values), (key, value)| {
+                        let value = match value {
+                            SvcParamValue::Mandatory(param_keys) => Value::list(
+                                param_keys
+                                    .0
+                                    .iter()
+                                    .map(|key| Value::string(key.to_string(), Span::unknown()))
+                                    .collect(),
+                                Span::unknown(),
+                            ),
+                            SvcParamValue::Alpn(alpn) => Value::list(
+                                alpn.0
+                                    .iter()
+                                    .map(|alpn| Value::string(alpn, Span::unknown()))
+                                    .collect(),
+                                Span::unknown(),
+                            ),
+                            nda @ SvcParamValue::NoDefaultAlpn => {
+                                Value::string(nda.to_string(), Span::unknown())
+                            }
+                            SvcParamValue::Port(port) => Value::int(*port as i64, Span::unknown()),
+                            SvcParamValue::Ipv4Hint(IpHint(ipv4s)) => Value::list(
+                                ipv4s
+                                    .iter()
+                                    .map(|ip| Value::string(ip.to_string(), Span::unknown()))
+                                    .collect(),
+                                Span::unknown(),
+                            ),
+                            SvcParamValue::EchConfig(EchConfig(config)) => {
+                                Value::binary(config.clone(), Span::unknown())
+                            }
+                            SvcParamValue::Ipv6Hint(IpHint(ipv6s)) => Value::list(
+                                ipv6s
+                                    .iter()
+                                    .map(|ip| Value::string(ip.to_string(), Span::unknown()))
+                                    .collect(),
+                                Span::unknown(),
+                            ),
+                            SvcParamValue::Unknown(Unknown(bytes)) => {
+                                Value::binary(bytes.clone(), Span::unknown())
+                            }
+                        };
+
+                        columns.push(key.to_string());
+                        values.push(value);
+                        (columns, values)
+                    },
+                );
+                let svc_params = Value::record(svc_params_cols, svc_params_vals, Span::unknown());
+
+                Value::record(
+                    vec![
+                        "svc_priority".into(),
+                        "target_name".into(),
+                        "svc_params".into(),
+                    ],
+                    vec![svc_priority, target_name, svc_params],
+                    Span::unknown(),
+                )
+            }
+
+            trust_dns_proto::rr::RData::MX(mx) => {
+                let preference = Value::int(mx.preference() as i64, Span::unknown());
+                let exchange = Value::string(mx.exchange().to_string(), Span::unknown());
+
+                Value::record(
+                    vec!["preference".into(), "exchange".into()],
+                    vec![preference, exchange],
+                    Span::unknown(),
+                )
+            }
+
+            trust_dns_proto::rr::RData::NAPTR(naptr) => {
+                let order = Value::int(naptr.order() as i64, Span::unknown());
+                let preference = Value::int(naptr.preference() as i64, Span::unknown());
+                let flags = util::string_or_binary(naptr.flags());
+                let services = util::string_or_binary(naptr.services());
+                let regexp = util::string_or_binary(naptr.regexp());
+                let replacement = Value::string(naptr.replacement().to_string(), Span::unknown());
+
+                Value::record(
+                    vec![
+                        "order".into(),
+                        "preference".into(),
+                        "flags".into(),
+                        "services".into(),
+                        "regexp".into(),
+                        "replacement".into(),
+                    ],
+                    vec![order, preference, flags, services, regexp, replacement],
+                    Span::unknown(),
+                )
+            }
+
+            trust_dns_proto::rr::RData::NULL(null) => util::string_or_binary(null.anything()),
+            trust_dns_proto::rr::RData::NS(ns) => Value::string(ns.to_string(), Span::unknown()),
+            trust_dns_proto::rr::RData::OPENPGPKEY(key) => {
+                Value::binary(key.public_key(), Span::unknown())
+            }
+
+            // does it make sense to include opt? you can't query it the same
+            // way
+            // trust_dns_proto::rr::RData::OPT(_) => todo!(),
+            trust_dns_proto::rr::RData::PTR(name) => {
+                Value::string(name.to_string(), Span::unknown())
+            }
+
+            trust_dns_proto::rr::RData::SOA(soa) => {
+                let mname = Value::string(soa.mname().to_string(), Span::unknown());
+                let rname = Value::string(soa.rname().to_string(), Span::unknown());
+                let serial = Value::int(soa.serial() as i64, Span::unknown());
+                let refresh = Value::int(soa.refresh() as i64, Span::unknown());
+                let retry = Value::int(soa.retry() as i64, Span::unknown());
+                let expire = Value::int(soa.expire() as i64, Span::unknown());
+                let minimum = Value::int(soa.minimum() as i64, Span::unknown());
+
+                Value::record(
+                    vec![
+                        "mname".into(),
+                        "rname".into(),
+                        "serial".into(),
+                        "refresh".into(),
+                        "retry".into(),
+                        "expire".into(),
+                        "minimum".into(),
+                    ],
+                    vec![mname, rname, serial, refresh, retry, expire, minimum],
+                    Span::unknown(),
+                )
+            }
+
+            trust_dns_proto::rr::RData::SRV(srv) => {
+                let priority = Value::int(srv.priority() as i64, Span::unknown());
+                let weight = Value::int(srv.weight() as i64, Span::unknown());
+                let port = Value::int(srv.port() as i64, Span::unknown());
+                let target = Value::string(srv.target().to_string(), Span::unknown());
+
+                Value::record(
+                    vec![
+                        "priority".into(),
+                        "weight".into(),
+                        "port".into(),
+                        "target".into(),
+                    ],
+                    vec![priority, weight, port, target],
+                    Span::unknown(),
+                )
+            }
+
+            trust_dns_proto::rr::RData::SSHFP(sshfp) => {
+                let algorithm = match sshfp.algorithm() {
+                    sshfp::Algorithm::Reserved => Value::string("reserved", Span::unknown()),
+                    sshfp::Algorithm::RSA => Value::string("RSA", Span::unknown()),
+                    sshfp::Algorithm::DSA => Value::string("DSA", Span::unknown()),
+                    sshfp::Algorithm::ECDSA => Value::string("ECDSA", Span::unknown()),
+                    sshfp::Algorithm::Ed25519 => Value::string("Ed25519", Span::unknown()),
+                    sshfp::Algorithm::Ed448 => Value::string("Ed448", Span::unknown()),
+                    sshfp::Algorithm::Unassigned(code) => Value::int(code as i64, Span::unknown()),
+                };
+
+                let fingerprint_type = match sshfp.fingerprint_type() {
+                    sshfp::FingerprintType::Reserved => Value::string("reserved", Span::unknown()),
+                    sshfp::FingerprintType::SHA1 => Value::string("SHA-1", Span::unknown()),
+                    sshfp::FingerprintType::SHA256 => Value::string("SHA-256", Span::unknown()),
+                    sshfp::FingerprintType::Unassigned(code) => {
+                        Value::int(code as i64, Span::unknown())
+                    }
+                };
+
+                let fingerprint = Value::binary(sshfp.fingerprint(), Span::unknown());
+
+                Value::record(
+                    vec![
+                        "algorithm".into(),
+                        "fingerprint_type".into(),
+                        "fingerprint".into(),
+                    ],
+                    vec![algorithm, fingerprint_type, fingerprint],
+                    Span::unknown(),
+                )
+            }
+            trust_dns_proto::rr::RData::TLSA(tlsa) => {
+                let cert_usage = match tlsa.cert_usage() {
+                    tlsa::CertUsage::CA => Value::string("CA", Span::unknown()),
+                    tlsa::CertUsage::Service => Value::string("service", Span::unknown()),
+                    tlsa::CertUsage::TrustAnchor => Value::string("trust anchor", Span::unknown()),
+                    tlsa::CertUsage::DomainIssued => {
+                        Value::string("domain issued", Span::unknown())
+                    }
+                    tlsa::CertUsage::Private => Value::string("private", Span::unknown()),
+                    tlsa::CertUsage::Unassigned(code) => Value::int(code as i64, Span::unknown()),
+                };
+
+                let selector = match tlsa.selector() {
+                    tlsa::Selector::Full => Value::string("full", Span::unknown()),
+                    tlsa::Selector::Spki => Value::string("spki", Span::unknown()),
+                    tlsa::Selector::Private => Value::string("private", Span::unknown()),
+                    tlsa::Selector::Unassigned(code) => Value::int(code as i64, Span::unknown()),
+                };
+
+                let matching = match tlsa.matching() {
+                    tlsa::Matching::Raw => Value::string("raw", Span::unknown()),
+                    tlsa::Matching::Sha256 => Value::string("SHA-256", Span::unknown()),
+                    tlsa::Matching::Sha512 => Value::string("SHA-512", Span::unknown()),
+                    tlsa::Matching::Private => Value::string("private", Span::unknown()),
+                    tlsa::Matching::Unassigned(code) => Value::int(code as i64, Span::unknown()),
+                };
+
+                let cert_data = Value::binary(tlsa.cert_data(), Span::unknown());
+
+                Value::record(
+                    vec![
+                        "cert_usage".into(),
+                        "selector".into(),
+                        "matching".into(),
+                        "cert_data".into(),
+                    ],
+                    vec![cert_usage, selector, matching, cert_data],
+                    Span::unknown(),
+                )
+            }
+            trust_dns_proto::rr::RData::TXT(data) => Value::list(
+                data.iter()
+                    .map(|txt_data| util::string_or_binary(Vec::from(txt_data.clone())))
+                    .collect(),
+                Span::unknown(),
+            ),
+            trust_dns_proto::rr::RData::DNSSEC(dnssec) => match dnssec {
+                DNSSECRData::CDNSKEY(dnskey) | DNSSECRData::DNSKEY(dnskey) => {
+                    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
+                    let secure_entry_point =
+                        Value::bool(dnskey.secure_entry_point(), Span::unknown());
+                    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
+                    let algorithm = Value::string(dnskey.algorithm().to_string(), Span::unknown());
+                    let public_key = Value::binary(dnskey.public_key(), Span::unknown());
+
+                    Value::record(
+                        vec![
+                            "zone_key".into(),
+                            "secure_entry_point".into(),
+                            "revoke".into(),
+                            "algorithm".into(),
+                            "public_key".into(),
+                        ],
+                        vec![zone_key, secure_entry_point, revoke, algorithm, public_key],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::CDS(ds) | DNSSECRData::DS(ds) => {
+                    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
+                    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
+                    let digest_type = Value::string(
+                        Into::<String>::into(match ds.digest_type() {
+                            dnssec::DigestType::SHA1 => "SHA-1",
+                            dnssec::DigestType::SHA256 => "SHA-256",
+                            dnssec::DigestType::GOSTR34_11_94 => "GOST R 34.11-94",
+                            dnssec::DigestType::SHA384 => "SHA-384",
+                            dnssec::DigestType::SHA512 => "SHA-512",
+                            dnssec::DigestType::ED25519 => "ED25519",
+                            _ => "unknown",
+                        }),
+                        Span::unknown(),
+                    );
+                    let digest = Value::binary(ds.digest(), Span::unknown());
+
+                    Value::record(
+                        vec![
+                            "key_tag".into(),
+                            "algorithm".into(),
+                            "digest_type".into(),
+                            "digest".into(),
+                        ],
+                        vec![key_tag, algorithm, digest_type, digest],
+                        Span::unknown(),
+                    )
+                }
+
+                DNSSECRData::KEY(key) => {
+                    let (key_authentication_prohibited, key_confidentiality_prohibited) =
+                        match key.key_trust() {
+                            key::KeyTrust::NotAuth => (
+                                Value::bool(true, Span::unknown()),
+                                Value::bool(false, Span::unknown()),
+                            ),
+                            key::KeyTrust::NotPrivate => (
+                                Value::bool(false, Span::unknown()),
+                                Value::bool(true, Span::unknown()),
+                            ),
+                            key::KeyTrust::AuthOrPrivate => (
+                                Value::bool(false, Span::unknown()),
+                                Value::bool(false, Span::unknown()),
+                            ),
+                            key::KeyTrust::DoNotTrust => (
+                                Value::bool(true, Span::unknown()),
+                                Value::bool(true, Span::unknown()),
+                            ),
+                        };
+
+                    let key_type = Value::record(
+                        vec![
+                            "authentication_prohibited".into(),
+                            "confidentiality_prohibited".into(),
+                        ],
+                        vec![
+                            key_authentication_prohibited,
+                            key_confidentiality_prohibited,
+                        ],
+                        Span::unknown(),
+                    );
+
+                    let key_name_type = Value::string(
+                        Into::<String>::into(match key.key_usage() {
+                            key::KeyUsage::Host => "host",
+                            #[allow(deprecated)]
+                            key::KeyUsage::Zone => "zone",
+                            key::KeyUsage::Entity => "entity",
+                            key::KeyUsage::Reserved => "reserved",
+                        }),
+                        Span::unknown(),
+                    );
+
+                    let key_signatory = key.signatory();
+                    let signatory = Value::record(
+                        vec![
+                            "zone".into(),
+                            "strong".into(),
+                            "unique".into(),
+                            "general".into(),
+                        ],
+                        #[allow(deprecated)]
+                        vec![
+                            key_signatory.zone,
+                            key_signatory.strong,
+                            key_signatory.unique,
+                            key_signatory.general,
+                        ]
+                        .into_iter()
+                        .map(|sig| Value::bool(sig, Span::unknown()))
+                        .collect(),
+                        Span::unknown(),
+                    );
+
+                    #[allow(deprecated)]
+                    let protocol = match key.protocol() {
+                        key::Protocol::Reserved => Value::string("RESERVED", Span::unknown()),
+                        key::Protocol::TLS => Value::string("TLS", Span::unknown()),
+                        key::Protocol::Email => Value::string("EMAIL", Span::unknown()),
+                        key::Protocol::DNSSec => Value::string("DNSSEC", Span::unknown()),
+                        key::Protocol::IPSec => Value::string("IPSEC", Span::unknown()),
+                        key::Protocol::Other(code) => Value::int(code as i64, Span::unknown()),
+                        key::Protocol::All => Value::string("ALL", Span::unknown()),
+                    };
+
+                    let algorithm = Value::string(key.algorithm().to_string(), Span::unknown());
+                    let public_key = Value::binary(key.public_key(), Span::unknown());
+
+                    Value::record(
+                        vec![
+                            "key_type".into(),
+                            "key_name_type".into(),
+                            "signatory".into(),
+                            "protocol".into(),
+                            "algorithm".into(),
+                            "public_key".into(),
+                        ],
+                        vec![
+                            key_type,
+                            key_name_type,
+                            signatory,
+                            protocol,
+                            algorithm,
+                            public_key,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::NSEC(nsec) => {
+                    let next_domain_name =
+                        Value::string(nsec.next_domain_name().to_string(), Span::unknown());
+                    let types = Value::list(
+                        nsec.type_bit_maps()
+                            .iter()
+                            .map(|rtype| Value::string(rtype.to_string(), Span::unknown()))
+                            .collect(),
+                        Span::unknown(),
+                    );
+
+                    Value::record(
+                        vec!["next_domain_name".into(), "types".into()],
+                        vec![next_domain_name, types],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::NSEC3(nsec3) => {
+                    let hash_algorithm = Value::string(
+                        Into::<String>::into(match nsec3.hash_algorithm() {
+                            dnssec::Nsec3HashAlgorithm::SHA1 => "SHA-1",
+                        }),
+                        Span::unknown(),
+                    );
+                    let opt_out = Value::bool(nsec3.opt_out(), Span::unknown());
+                    let iterations = Value::int(nsec3.iterations() as i64, Span::unknown());
+                    let salt = Value::binary(nsec3.salt(), Span::unknown());
+                    let next_hashed_owner_name =
+                        Value::binary(nsec3.next_hashed_owner_name(), Span::unknown());
+                    let types = Value::list(
+                        nsec3
+                            .type_bit_maps()
+                            .iter()
+                            .map(|rtype| Value::string(rtype.to_string(), Span::unknown()))
+                            .collect(),
+                        Span::unknown(),
+                    );
+
+                    Value::record(
+                        vec![
+                            "hash_algorithm".into(),
+                            "opt_out".into(),
+                            "iterations".into(),
+                            "salt".into(),
+                            "next_hashed_owner_name".into(),
+                            "types".into(),
+                        ],
+                        vec![
+                            hash_algorithm,
+                            opt_out,
+                            iterations,
+                            salt,
+                            next_hashed_owner_name,
+                            types,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::NSEC3PARAM(nsec3param) => {
+                    let hash_algorithm = Value::string(
+                        Into::<String>::into(match nsec3param.hash_algorithm() {
+                            dnssec::Nsec3HashAlgorithm::SHA1 => "SHA-1",
+                        }),
+                        Span::unknown(),
+                    );
+                    let opt_out = Value::bool(nsec3param.opt_out(), Span::unknown());
+                    let iterations = Value::int(nsec3param.iterations() as i64, Span::unknown());
+                    let salt = Value::binary(nsec3param.salt(), Span::unknown());
+                    let flags = Value::int(nsec3param.flags() as i64, Span::unknown());
+
+                    Value::record(
+                        vec![
+                            "hash_algorithm".into(),
+                            "opt_out".into(),
+                            "iterations".into(),
+                            "salt".into(),
+                            "flags".into(),
+                        ],
+                        vec![hash_algorithm, opt_out, iterations, salt, flags],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::SIG(sig) => {
+                    let type_covered =
+                        Value::string(sig.type_covered().to_string(), Span::unknown());
+                    let algorithm = Value::string(sig.algorithm().to_string(), Span::unknown());
+                    let num_labels = Value::int(sig.num_labels() as i64, Span::unknown());
+                    let original_ttl = Value::int(sig.original_ttl() as i64, Span::unknown());
+                    let sig_expiration = Value::int(sig.sig_expiration() as i64, Span::unknown());
+                    let sig_inception = Value::int(sig.sig_inception() as i64, Span::unknown());
+                    let key_tag = Value::int(sig.key_tag() as i64, Span::unknown());
+                    let signer_name = Value::string(sig.signer_name().to_string(), Span::unknown());
+                    let sig = Value::binary(sig.sig(), Span::unknown());
+
+                    Value::record(
+                        vec![
+                            "type_covered".into(),
+                            "algorithm".into(),
+                            "num_labels".into(),
+                            "original_ttl".into(),
+                            "signature_expiration".into(),
+                            "signature_inception".into(),
+                            "key_tag".into(),
+                            "signer_name".into(),
+                            "signature".into(),
+                        ],
+                        vec![
+                            type_covered,
+                            algorithm,
+                            num_labels,
+                            original_ttl,
+                            sig_expiration,
+                            sig_inception,
+                            key_tag,
+                            signer_name,
+                            sig,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::TSIG(tsig) => {
+                    // [NOTE] oid, error, and other do not have accessors
+                    let algorithm = Value::string(tsig.algorithm().to_string(), Span::unknown());
+                    let time = Value::int(tsig.time() as i64, Span::unknown());
+                    let fudge = Value::int(tsig.fudge() as i64, Span::unknown());
+                    let mac = Value::binary(tsig.mac(), Span::unknown());
+                    // let oid = Value::int(tsig.oid() as i64, Span::unknown());
+                    // let error = Value::int(tsig.error() as i64, Span::unknown());
+                    // let other = Value::binary(tsig.other(), Span::unknown());
+
+                    Value::record(
+                        vec![
+                            "algorithm".into(),
+                            "time".into(),
+                            "fudge".into(),
+                            "mac".into(),
+                            // "oid".into(),
+                            // "error".into(),
+                            // "other".into(),
+                        ],
+                        // vec![algorithm, time, fudge, mac, oid, error, other],
+                        vec![algorithm, time, fudge, mac],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::Unknown { code, rdata } => Value::record(
+                    vec!["code".into(), "rdata".into()],
+                    vec![
+                        Value::int(code as i64, Span::unknown()),
+                        Value::binary(rdata.anything(), Span::unknown()),
+                    ],
+                    Span::unknown(),
+                ),
+                rdata => Value::string(rdata.to_string(), Span::unknown()),
+            },
+            trust_dns_proto::rr::RData::Unknown { code, rdata } => Value::record(
+                vec!["code".into(), "rdata".into()],
+                vec![
+                    Value::int(code as i64, Span::unknown()),
+                    Value::binary(rdata.anything(), Span::unknown()),
+                ],
+                Span::unknown(),
+            ),
+            rdata => Value::string(rdata.to_string(), Span::unknown()),
+        }
     }
 }
 
@@ -458,6 +1081,20 @@ impl TryFrom<Value> for DnssecMode {
                 msg: "Input must be a string".into(),
                 span: Some(value.span()?),
             }),
+        }
+    }
+}
+
+pub mod util {
+    use nu_protocol::{Span, Value};
+
+    pub fn string_or_binary<V>(bytes: V) -> Value
+    where
+        V: Into<Vec<u8>>,
+    {
+        match String::from_utf8(bytes.into()) {
+            Ok(s) => Value::string(s, Span::unknown()),
+            Err(err) => Value::binary(err.into_bytes(), Span::unknown()),
         }
     }
 }
