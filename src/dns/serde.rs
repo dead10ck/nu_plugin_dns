@@ -20,6 +20,7 @@ use trust_dns_proto::rr::rdata::svcb::SvcParamValue;
 use trust_dns_proto::rr::rdata::svcb::Unknown;
 use trust_dns_proto::rr::rdata::tlsa;
 use trust_dns_proto::rr::RecordType;
+use trust_dns_proto::serialize::binary::BinEncodable;
 use trust_dns_resolver::Name;
 
 use super::constants;
@@ -72,11 +73,27 @@ where
     }
 }
 
-pub struct Message(pub(crate) trust_dns_proto::op::Message);
+pub struct Message {
+    msg: trust_dns_proto::op::Message,
+    bytes: Vec<u8>,
+}
 
 impl Message {
+    pub fn new(msg: trust_dns_proto::op::Message) -> Self {
+        let bytes = msg.to_bytes().expect("unencodable message");
+        Self { msg, bytes }
+    }
+
+    pub fn into_inner(self) -> trust_dns_proto::op::Message {
+        self.msg
+    }
+
+    pub fn size(&self) -> usize {
+        self.bytes.len()
+    }
+
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
-        let Message(message) = self;
+        let message = self.into_inner();
         let header = Header(message.header()).into_value(call);
         let mut parts = message.into_parts();
 
