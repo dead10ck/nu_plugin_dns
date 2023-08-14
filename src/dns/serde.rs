@@ -93,6 +93,7 @@ impl Message {
     }
 
     pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+        let size = Value::filesize(self.size() as i64, Span::unknown());
         let message = self.into_inner();
         let header = Header(message.header()).into_value(call);
         let mut parts = message.into_parts();
@@ -123,7 +124,7 @@ impl Message {
 
         Ok(Value::record(
             Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
-            vec![header, question, answer, authority, additional, edns],
+            vec![header, question, answer, authority, additional, edns, size],
             Span::unknown(),
         ))
     }

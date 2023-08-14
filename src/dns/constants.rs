@@ -24,7 +24,7 @@ pub mod columns {
     pub const ADDRESS: &str = "address";
     pub const PROTOCOL: &str = "protocol";
 
-    pub const TOP_COLS: &[&str] = &["nameserver", "total_size", "messages"];
+    pub const TOP_COLS: &[&str] = &["nameserver", "messages"];
 
     pub const MESSAGE_COLS: &[&str] = &[
         "header",
@@ -33,6 +33,7 @@ pub mod columns {
         "authority",
         "additional",
         "edns",
+        "size",
     ];
 
     pub const HEADER_COLS: &[&str] = &[

@@ -121,8 +121,6 @@ impl Dns {
 
         let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, dnssec_mode).await?;
 
-        let mut total_size = 0;
-
         let messages: Vec<_> = futures_util::future::join_all(queries.into_iter().map(|query| {
             let parts = query.0.into_parts();
             client.query(parts.name, parts.query_class, parts.query_type)
@@ -138,7 +136,6 @@ impl Dns {
         .into_iter()
         .map(|resp: trust_dns_proto::xfer::DnsResponse| {
             let msg = serde::Message::new(resp.into_inner());
-            total_size += msg.size();
             msg.into_value(call)
         })
         .collect::<Result<_, _>>()?;
@@ -157,7 +154,6 @@ impl Dns {
                     ],
                     Span::unknown(),
                 ),
-                Value::filesize(total_size as i64, Span::unknown()),
                 Value::list(messages, Span::unknown()),
             ],
             Span::unknown(),
