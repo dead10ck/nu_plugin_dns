@@ -26,7 +26,15 @@ pub mod columns {
     pub const ADDRESS: &str = "address";
     pub const PROTOCOL: &str = "protocol";
 
-    pub const MESSAGE_COLS: &[&str] = &["header", "question", "answer", "authority", "additional"];
+    pub const MESSAGE_COLS: &[&str] = &[
+        "header",
+        "question",
+        "answer",
+        "authority",
+        "additional",
+        "edns",
+    ];
+
     pub const HEADER_COLS: &[&str] = &[
         "id",
         "message_type",

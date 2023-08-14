@@ -11,6 +11,8 @@ use trust_dns_client::rr::dnssec;
 use trust_dns_client::rr::rdata::key;
 use trust_dns_client::rr::rdata::DNSSECRData;
 use trust_dns_proto::error::ProtoError;
+use trust_dns_proto::rr::rdata::opt::EdnsCode;
+use trust_dns_proto::rr::rdata::opt::EdnsOption;
 use trust_dns_proto::rr::rdata::sshfp;
 use trust_dns_proto::rr::rdata::svcb::EchConfig;
 use trust_dns_proto::rr::rdata::svcb::IpHint;
@@ -84,25 +86,26 @@ impl Message {
         );
 
         let parse_records = |records: Vec<trust_dns_client::rr::Record>| {
-            records
-                .into_iter()
-                .map(|record| Record(record).into_value(call))
-                .collect()
+            Value::list(
+                records
+                    .into_iter()
+                    .map(|record| Record(record).into_value(call))
+                    .collect(),
+                Span::unknown(),
+            )
         };
 
         let answer = parse_records(parts.answers);
         let authority = parse_records(parts.name_servers);
         let additional = parse_records(parts.additionals);
+        let edns = parts
+            .edns
+            .map(|edns| Edns(edns).into_value(call))
+            .unwrap_or(Value::nothing(Span::unknown()));
 
         Value::record(
             Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
-            vec![
-                header,
-                question,
-                Value::list(answer, Span::unknown()),
-                Value::list(authority, Span::unknown()),
-                Value::list(additional, Span::unknown()),
-            ],
+            vec![header, question, answer, authority, additional, edns],
             Span::unknown(),
         )
     }
@@ -942,6 +945,87 @@ impl RData {
             ),
             rdata => Value::string(rdata.to_string(), Span::unknown()),
         }
+    }
+}
+
+pub struct Edns(pub(crate) trust_dns_proto::op::Edns);
+
+impl Edns {
+    pub fn into_value(self, call: &EvaluatedCall) -> Value {
+        let edns = self.0;
+        let rcode_high = Value::int(edns.rcode_high() as i64, Span::unknown());
+        let version = Value::int(edns.version() as i64, Span::unknown());
+        let dnssec_ok = Value::bool(edns.dnssec_ok(), Span::unknown());
+        let max_payload = Value::int(edns.max_payload() as i64, Span::unknown());
+        let opts = Opt(edns.options()).into_value(call);
+
+        Value::record(
+            vec![
+                "rcode_high".into(),
+                "version".into(),
+                "dnssec_ok".into(),
+                "max_payload".into(),
+                "opts".into(),
+            ],
+            vec![rcode_high, version, dnssec_ok, max_payload, opts],
+            Span::unknown(),
+        )
+    }
+}
+
+pub struct Opt<'o>(pub(crate) &'o trust_dns_proto::rr::rdata::OPT);
+
+impl<'o> Opt<'o> {
+    pub fn into_value(self, _call: &EvaluatedCall) -> Value {
+        let opts: HashMap<_, _> = self
+            .0
+            .as_ref()
+            .iter()
+            .map(|(code, option)| {
+                let code = match code {
+                    EdnsCode::Zero => "zero".into(),
+                    EdnsCode::LLQ => "LLQ".into(),
+                    EdnsCode::UL => "UL".into(),
+                    EdnsCode::NSID => "NSID".into(),
+                    EdnsCode::DAU => "DAU".into(),
+                    EdnsCode::DHU => "DHU".into(),
+                    EdnsCode::N3U => "N3U".into(),
+                    EdnsCode::Subnet => "subnet".into(),
+                    EdnsCode::Expire => "EXPIRE".into(),
+                    EdnsCode::Cookie => "cookie".into(),
+                    EdnsCode::Keepalive => "keepalive".into(),
+                    EdnsCode::Padding => "padding".into(),
+                    EdnsCode::Chain => "chain".into(),
+                    EdnsCode::Unknown(code) => format!("unknown({})", code),
+                    ednscode => format!("unknown Edns: {:?}", ednscode),
+                };
+
+                let option = match option {
+                    EdnsOption::DAU(supported)
+                    | EdnsOption::DHU(supported)
+                    | EdnsOption::N3U(supported) => Value::list(
+                        supported
+                            .iter()
+                            .map(|alg| Value::string(alg.to_string(), Span::unknown()))
+                            .collect(),
+                        Span::unknown(),
+                    ),
+                    EdnsOption::Unknown(code, val) => Value::record(
+                        vec!["code".into(), "data".into()],
+                        vec![
+                            Value::int(*code as i64, Span::unknown()),
+                            util::string_or_binary(val.clone()),
+                        ],
+                        Span::unknown(),
+                    ),
+                    _ => todo!(),
+                };
+
+                (code, option)
+            })
+            .collect();
+
+        Value::record_from_hashmap(&opts, Span::unknown())
     }
 }
 
