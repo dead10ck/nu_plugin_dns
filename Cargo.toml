@@ -15,6 +15,7 @@ bench = false
 bench = false
 
 [dependencies]
+chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.28"
 nu-plugin = "0.83.0"
 nu-protocol = "0.83.0"

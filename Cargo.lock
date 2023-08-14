@@ -840,6 +840,7 @@ dependencies = [
 name = "nu_plugin_dns"
 version = "0.0.1"
 dependencies = [
+ "chrono",
  "futures-util",
  "nu-plugin",
  "nu-protocol",

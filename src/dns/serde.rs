@@ -92,7 +92,7 @@ impl Message {
         self.bytes.len()
     }
 
-    pub fn into_value(self, call: &EvaluatedCall) -> Value {
+    pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
         let message = self.into_inner();
         let header = Header(message.header()).into_value(call);
         let mut parts = message.into_parts();
@@ -102,29 +102,30 @@ impl Message {
             |q| Query(q).into_value(call),
         );
 
-        let parse_records = |records: Vec<trust_dns_client::rr::Record>| {
-            Value::list(
-                records
-                    .into_iter()
-                    .map(|record| Record(record).into_value(call))
-                    .collect(),
-                Span::unknown(),
-            )
-        };
+        let parse_records =
+            |records: Vec<trust_dns_client::rr::Record>| -> Result<Value, LabeledError> {
+                Ok(Value::list(
+                    records
+                        .into_iter()
+                        .map(|record| Record(record).into_value(call))
+                        .collect::<Result<_, _>>()?,
+                    Span::unknown(),
+                ))
+            };
 
-        let answer = parse_records(parts.answers);
-        let authority = parse_records(parts.name_servers);
-        let additional = parse_records(parts.additionals);
+        let answer = parse_records(parts.answers)?;
+        let authority = parse_records(parts.name_servers)?;
+        let additional = parse_records(parts.additionals)?;
         let edns = parts
             .edns
             .map(|edns| Edns(edns).into_value(call))
             .unwrap_or(Value::nothing(Span::unknown()));
 
-        Value::record(
+        Ok(Value::record(
             Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
             vec![header, question, answer, authority, additional, edns],
             Span::unknown(),
-        )
+        ))
     }
 }
 
@@ -332,32 +333,32 @@ impl Query {
 pub struct Record(pub(crate) trust_dns_proto::rr::resource::Record);
 
 impl Record {
-    pub fn into_value(self, call: &EvaluatedCall) -> Value {
+    pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
         let Record(record) = self;
         let parts = record.into_parts();
 
         let name = Value::string(parts.name_labels.to_utf8(), Span::unknown());
         let rtype = code_to_record_u16(parts.rr_type, call);
         let class = code_to_record_u16(parts.dns_class, call);
-        let ttl = Value::int(parts.ttl as i64, Span::unknown());
+        let ttl = util::sec_to_duration(parts.ttl);
         let rdata = match parts.rdata {
-            Some(data) => RData(data).into_value(call),
+            Some(data) => RData(data).into_value(call)?,
             None => Value::nothing(Span::unknown()),
         };
 
-        Value::record(
+        Ok(Value::record(
             Vec::from_iter(constants::columns::RECORD_COLS.iter().map(|s| (*s).into())),
             vec![name, rtype, class, ttl, rdata],
             Span::unknown(),
-        )
+        ))
     }
 }
 
 pub struct RData(pub(crate) trust_dns_proto::rr::RData);
 
 impl RData {
-    pub fn into_value(self, _call: &EvaluatedCall) -> Value {
-        match self.0 {
+    pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+        let val = match self.0 {
             trust_dns_proto::rr::RData::CAA(caa) => {
                 let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
                 let tag = Value::string(caa.tag().as_str(), Span::unknown());
@@ -520,10 +521,7 @@ impl RData {
             trust_dns_proto::rr::RData::OPENPGPKEY(key) => {
                 Value::binary(key.public_key(), Span::unknown())
             }
-
-            // does it make sense to include opt? you can't query it the same
-            // way
-            // trust_dns_proto::rr::RData::OPT(_) => todo!(),
+            trust_dns_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(call),
             trust_dns_proto::rr::RData::PTR(name) => {
                 Value::string(name.to_string(), Span::unknown())
             }
@@ -532,10 +530,10 @@ impl RData {
                 let mname = Value::string(soa.mname().to_string(), Span::unknown());
                 let rname = Value::string(soa.rname().to_string(), Span::unknown());
                 let serial = Value::int(soa.serial() as i64, Span::unknown());
-                let refresh = Value::int(soa.refresh() as i64, Span::unknown());
-                let retry = Value::int(soa.retry() as i64, Span::unknown());
-                let expire = Value::int(soa.expire() as i64, Span::unknown());
-                let minimum = Value::int(soa.minimum() as i64, Span::unknown());
+                let refresh = util::sec_to_duration(soa.refresh() as u64);
+                let retry = util::sec_to_duration(soa.retry() as u64);
+                let expire = util::sec_to_duration(soa.expire() as u64);
+                let minimum = util::sec_to_duration(soa.minimum() as u64);
 
                 Value::record(
                     vec![
@@ -884,9 +882,9 @@ impl RData {
                         Value::string(sig.type_covered().to_string(), Span::unknown());
                     let algorithm = Value::string(sig.algorithm().to_string(), Span::unknown());
                     let num_labels = Value::int(sig.num_labels() as i64, Span::unknown());
-                    let original_ttl = Value::int(sig.original_ttl() as i64, Span::unknown());
-                    let sig_expiration = Value::int(sig.sig_expiration() as i64, Span::unknown());
-                    let sig_inception = Value::int(sig.sig_inception() as i64, Span::unknown());
+                    let original_ttl = util::sec_to_duration(sig.original_ttl());
+                    let sig_expiration = util::sec_to_date(sig.sig_expiration(), call.head)?;
+                    let sig_inception = util::sec_to_date(sig.sig_inception(), call.head)?;
                     let key_tag = Value::int(sig.key_tag() as i64, Span::unknown());
                     let signer_name = Value::string(sig.signer_name().to_string(), Span::unknown());
                     let sig = Value::binary(sig.sig(), Span::unknown());
@@ -920,7 +918,7 @@ impl RData {
                 DNSSECRData::TSIG(tsig) => {
                     // [NOTE] oid, error, and other do not have accessors
                     let algorithm = Value::string(tsig.algorithm().to_string(), Span::unknown());
-                    let time = Value::int(tsig.time() as i64, Span::unknown());
+                    let time = util::sec_to_date(tsig.time() as i64, call.head)?;
                     let fudge = Value::int(tsig.fudge() as i64, Span::unknown());
                     let mac = Value::binary(tsig.mac(), Span::unknown());
                     // let oid = Value::int(tsig.oid() as i64, Span::unknown());
@@ -961,7 +959,9 @@ impl RData {
                 Span::unknown(),
             ),
             rdata => Value::string(rdata.to_string(), Span::unknown()),
-        }
+        };
+
+        Ok(val)
     }
 }
 
@@ -973,7 +973,7 @@ impl Edns {
         let rcode_high = Value::int(edns.rcode_high() as i64, Span::unknown());
         let version = Value::int(edns.version() as i64, Span::unknown());
         let dnssec_ok = Value::bool(edns.dnssec_ok(), Span::unknown());
-        let max_payload = Value::int(edns.max_payload() as i64, Span::unknown());
+        let max_payload = Value::filesize(edns.max_payload() as i64, Span::unknown());
         let opts = Opt(edns.options()).into_value(call);
 
         Value::record(
@@ -1187,6 +1187,10 @@ impl TryFrom<Value> for DnssecMode {
 }
 
 pub mod util {
+    use std::time::Duration;
+
+    use chrono::TimeZone;
+    use nu_plugin::LabeledError;
     use nu_protocol::{Span, Value};
 
     pub fn string_or_binary<V>(bytes: V) -> Value
@@ -1197,5 +1201,35 @@ pub mod util {
             Ok(s) => Value::string(s, Span::unknown()),
             Err(err) => Value::binary(err.into_bytes(), Span::unknown()),
         }
+    }
+
+    pub fn sec_to_duration<U: Into<u64>>(sec: U) -> Value {
+        Value::duration(
+            Duration::from_secs(sec.into()).as_nanos() as i64,
+            Span::unknown(),
+        )
+    }
+
+    pub fn sec_to_date<U: Into<i64>>(sec: U, input_span: Span) -> Result<Value, LabeledError> {
+        let secs = sec.into();
+        let datetime = match chrono::Utc.timestamp_opt(secs, 0) {
+            chrono::LocalResult::None => Err(LabeledError {
+                label: "InvalidTimeError".into(),
+                msg: format!("Invalid time: {}", secs),
+                span: Some(input_span),
+            }),
+            chrono::LocalResult::Single(dt) => Ok(dt),
+            chrono::LocalResult::Ambiguous(dt1, dt2) => Err(LabeledError {
+                label: "InvalidTimeError".into(),
+                msg: format!(
+                    "Time {} produced ambiguous result: {} vs {}",
+                    secs, dt1, dt2
+                ),
+                span: Some(input_span),
+            }),
+        }?
+        .fixed_offset();
+
+        Ok(Value::date(datetime, Span::unknown()))
     }
 }

@@ -141,7 +141,7 @@ impl Dns {
             total_size += msg.size();
             msg.into_value(call)
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
         let result = Value::record(
             Vec::from_iter(constants::columns::TOP_COLS.iter().map(|s| (*s).into())),
