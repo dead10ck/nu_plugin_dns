@@ -45,6 +45,12 @@ impl Plugin for Dns {
                 r##"Perform DNSSEC validation on records. Choices are: "none", "strict" (error if record has no RRSIG or does not validate), "opportunistic" (validate if RRSIGs present, otherwise no validation; default)"##,
                 Some('d'),
             )
+            .named(
+                constants::flags::DNS_NAME,
+                SyntaxShape::String,
+                "DNS name of the TLS certificate in use by the nameserver (for TLS and HTTPS only)",
+                Some('n'),
+            )
             .plugin_examples(vec![
                 PluginExample {
                     example: format!("{} google.com", constants::commands::QUERY),

@@ -19,16 +19,41 @@ chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.28"
 nu-plugin = "0.83.0"
 nu-protocol = "0.83.0"
+rustls = "0.20.8"
 tokio = "1.29.1"
-trust-dns-resolver = "0.22.0"
+webpki-roots = "0.25.2"
+
+[dependencies.trust-dns-resolver]
+version = "0.22.0"
+features = [
+  "dnssec-ring",
+  "dns-over-rustls",
+  "dns-over-https",
+  "dns-over-https-rustls",
+  "dns-over-quic",
+]
 
 [dependencies.trust-dns-proto]
 version = "0.22.0"
-features = [ "dnssec-ring", "backtrace" ]
+features = [
+  "dnssec-ring",
+  "backtrace",
+  "dns-over-rustls",
+  "dns-over-https",
+  "dns-over-https-rustls",
+  "dns-over-quic",
+]
 
 [dependencies.trust-dns-client]
 version = "0.22.0"
-features = [ "dnssec-ring", "backtrace" ]
+features = [
+  "dnssec-ring",
+  "backtrace",
+  "dns-over-rustls",
+  "dns-over-https",
+  "dns-over-https-rustls",
+  "dns-over-quic",
+]
 
 [patch.crates-io]
 pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }

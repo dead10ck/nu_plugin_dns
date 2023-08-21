@@ -1130,6 +1130,9 @@ impl TryFrom<Value> for Protocol {
             Value::String { val, span } => match val.to_uppercase().as_str() {
                 "UDP" => Protocol(trust_dns_resolver::config::Protocol::Udp),
                 "TCP" => Protocol(trust_dns_resolver::config::Protocol::Tcp),
+                "TLS" => Protocol(trust_dns_resolver::config::Protocol::Tls),
+                "HTTPS" => Protocol(trust_dns_resolver::config::Protocol::Https),
+                "QUIC" => Protocol(trust_dns_resolver::config::Protocol::Quic),
                 proto => {
                     return Err(LabeledError {
                         label: "InvalidProtocol".into(),

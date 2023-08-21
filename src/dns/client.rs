@@ -1,20 +1,25 @@
-use std::{net::SocketAddr, pin::Pin};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use futures_util::{future, Stream, StreamExt};
-use nu_plugin::LabeledError;
+use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::Span;
+use rustls::{OwnedTrustAnchor, RootCertStore};
 use tokio::{net::UdpSocket, task::JoinSet};
 use trust_dns_client::client::{AsyncClient, AsyncDnssecClient};
 use trust_dns_proto::{
     error::{ProtoError, ProtoErrorKind},
+    https::HttpsClientStreamBuilder,
     iocompat::AsyncIoTokioAsStd,
     op::NoopMessageFinalizer,
+    quic::QuicClientStream,
     tcp::TcpClientStream,
     udp::UdpClientStream,
     xfer::DnsResponse,
     DnsHandle, DnsMultiplexer,
 };
 use trust_dns_resolver::config::Protocol;
+
+use crate::dns::{constants, serde};
 
 use super::serde::DnssecMode;
 
@@ -34,12 +39,14 @@ pub struct DnsClient {
     dnssec_client: Option<AsyncDnssecClient>,
 }
 
+type TokioTcpConnect = AsyncIoTokioAsStd<tokio::net::TcpStream>;
+
 impl DnsClient {
     pub async fn new(
         addr: SocketAddr,
         addr_span: Option<Span>,
         protocol: Protocol,
-        dnssec_mode: DnssecMode,
+        call: &EvaluatedCall,
     ) -> Result<(Self, JoinSet<Result<(), ProtoError>>), LabeledError> {
         let connect_err = |err| LabeledError {
             label: "ConnectError".into(),
@@ -47,62 +54,107 @@ impl DnsClient {
             span: addr_span,
         };
 
+        let dnssec_mode = match call.get_flag_value(constants::flags::DNSSEC) {
+            Some(val) => serde::DnssecMode::try_from(val)?,
+            None => serde::DnssecMode::Opportunistic,
+        };
+
         let mut join_set = JoinSet::new();
+
+        macro_rules! make_clients {
+            ($conn:expr) => {{
+                let async_client = if dnssec_mode != DnssecMode::Strict {
+                    let (async_client, bg) =
+                        AsyncClient::connect($conn).await.map_err(connect_err)?;
+                    join_set.spawn(bg);
+                    Some(async_client)
+                } else {
+                    None
+                };
+
+                let dnssec_client = if dnssec_mode != DnssecMode::None {
+                    let (dnssec_client, bg) = AsyncDnssecClient::connect($conn)
+                        .await
+                        .map_err(connect_err)?;
+                    join_set.spawn(bg);
+                    Some(dnssec_client)
+                } else {
+                    None
+                };
+                (async_client, dnssec_client)
+            }};
+        }
 
         let (async_client, dnssec_client) = match protocol {
             Protocol::Udp => {
-                let async_client = if dnssec_mode != DnssecMode::Strict {
-                    let conn = UdpClientStream::<UdpSocket>::new(addr);
-                    let (async_client, bg) =
-                        AsyncClient::connect(conn).await.map_err(connect_err)?;
-                    join_set.spawn(bg);
-                    Some(async_client)
-                } else {
-                    None
-                };
-
-                let dnssec_client = if dnssec_mode != DnssecMode::None {
-                    let conn = UdpClientStream::<UdpSocket>::new(addr);
-                    let (dnssec_client, bg) = AsyncDnssecClient::connect(conn)
-                        .await
-                        .map_err(connect_err)?;
-                    join_set.spawn(bg);
-                    Some(dnssec_client)
-                } else {
-                    None
-                };
-
-                (async_client, dnssec_client)
+                make_clients!(UdpClientStream::<UdpSocket>::new(addr))
             }
             Protocol::Tcp => {
-                let async_client = if dnssec_mode != DnssecMode::Strict {
-                    let (stream, sender) =
-                        TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
-                    let conn = DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None);
-                    let (async_client, bg) =
-                        AsyncClient::connect(conn).await.map_err(connect_err)?;
-                    join_set.spawn(bg);
-                    Some(async_client)
-                } else {
-                    None
-                };
-
-                let dnssec_client = if dnssec_mode != DnssecMode::None {
-                    let (stream, sender) =
-                        TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
-                    let conn = DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None);
-                    let (dnssec_client, bg) = AsyncDnssecClient::connect(conn)
-                        .await
-                        .map_err(connect_err)?;
-                    join_set.spawn(bg);
-                    Some(dnssec_client)
-                } else {
-                    None
-                };
-
-                (async_client, dnssec_client)
+                make_clients!({
+                    let (stream, sender) = TcpClientStream::<TokioTcpConnect>::new(addr);
+                    DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None)
+                })
             }
-            _ => todo!(),
+            proto @ (Protocol::Https | Protocol::Tls | Protocol::Quic) => {
+                let mut root_store = RootCertStore::empty();
+                root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(
+                    |ta| {
+                        OwnedTrustAnchor::from_subject_spki_name_constraints(
+                            ta.subject,
+                            ta.spki,
+                            ta.name_constraints,
+                        )
+                    },
+                ));
+
+                let client_config = rustls::ClientConfig::builder()
+                    .with_safe_defaults()
+                    .with_root_certificates(root_store)
+                    .with_no_client_auth();
+
+                let dns_name = call
+                    .get_flag_value(constants::flags::DNS_NAME)
+                    .ok_or_else(|| LabeledError {
+                        label: "MissingRequiredArgError".into(),
+                        msg: "HTTPS requires a DNS name".into(),
+                        span: None,
+                    })?
+                    .as_string()?;
+
+                match proto {
+                    Protocol::Tls => {
+                        let client_config = Arc::new(client_config);
+                        make_clients!({
+                            let (stream, sender) = trust_dns_proto::rustls::tls_client_connect::<
+                                TokioTcpConnect,
+                            >(
+                                addr, dns_name.clone(), client_config.clone()
+                            );
+                            DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None)
+                        })
+                    }
+                    Protocol::Https => {
+                        let client_config = Arc::new(client_config);
+                        make_clients!({
+                            HttpsClientStreamBuilder::with_client_config(client_config.clone())
+                                .build::<TokioTcpConnect>(addr, dns_name.clone())
+                        })
+                    }
+                    Protocol::Quic => make_clients!({
+                        let mut builder = QuicClientStream::builder();
+                        builder.crypto_config(client_config.clone());
+                        builder.build(addr, dns_name.clone())
+                    }),
+                    _ => unreachable!(),
+                }
+            }
+            proto => {
+                return Err(LabeledError {
+                    label: "UnknownProtocolError".into(),
+                    msg: format!("Unknown protocol: {}", proto),
+                    span: Some(call.head),
+                })
+            }
         };
 
         Ok((

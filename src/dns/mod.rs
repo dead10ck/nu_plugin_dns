@@ -75,10 +75,12 @@ impl Dns {
 
         let (addr, addr_span, protocol) = match call.get_flag_value(flags::SERVER) {
             Some(Value::String { val, span }) => {
+                let protocol = protocol.unwrap_or(Protocol::Udp);
                 let addr = SocketAddr::from_str(&val)
                     .or_else(|_| {
-                        IpAddr::from_str(&val)
-                            .map(|ip| SocketAddr::new(ip, constants::config::SERVER_PORT))
+                        IpAddr::from_str(&val).map(|ip| {
+                            SocketAddr::new(ip, constants::config::default_port(protocol))
+                        })
                     })
                     .map_err(|err| LabeledError {
                         label: "InvalidServerAddress".into(),
@@ -86,7 +88,7 @@ impl Dns {
                         span: Some(span),
                     })?;
 
-                (addr, Some(span), protocol.unwrap_or(Protocol::Udp))
+                (addr, Some(span), protocol)
             }
             None => {
                 let (config, _) =
@@ -113,13 +115,7 @@ impl Dns {
         };
 
         let queries: Vec<Query> = Dns::get_queries(&input, call)?;
-
-        let dnssec_mode = match call.get_flag_value(flags::DNSSEC) {
-            Some(val) => serde::DnssecMode::try_from(val)?,
-            None => serde::DnssecMode::Opportunistic,
-        };
-
-        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, dnssec_mode).await?;
+        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
 
         let messages: Vec<_> = futures_util::future::join_all(queries.into_iter().map(|query| {
             let parts = query.0.into_parts();

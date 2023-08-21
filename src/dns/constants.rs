@@ -3,6 +3,7 @@ pub mod commands {
 }
 
 pub mod flags {
+    pub const DNS_NAME: &str = "dns-name";
     pub const NAME: &str = "name";
     pub const SERVER: &str = "server";
     pub const PROTOCOL: &str = "protocol";
@@ -13,7 +14,16 @@ pub mod flags {
 }
 
 pub mod config {
-    pub const SERVER_PORT: u16 = 53;
+    use trust_dns_resolver::config::Protocol;
+
+    pub fn default_port(protocol: Protocol) -> u16 {
+        match protocol {
+            Protocol::Udp | Protocol::Tcp => 53,
+            Protocol::Tls | Protocol::Quic => 853,
+            Protocol::Https => 443,
+            _ => 53,
+        }
+    }
 }
 
 pub mod columns {
