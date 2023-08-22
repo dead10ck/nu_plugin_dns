@@ -1,6 +1,6 @@
 [package]
 name = "nu_plugin_dns"
-version = "0.0.1"
+version = "1.0.0"
 authors = ["Skyler Hawthorne <skyler@dead10ck.dev>"]
 description = "A DNS utility for nushell"
 
@@ -21,10 +21,11 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.28"
-nu-plugin = "0.83.0"
-nu-protocol = "0.83.0"
+nu-plugin = "0.83.1"
+nu-protocol = "0.83.1"
+# must keep in lockstep with trust-dns
 rustls = "0.20.8"
-tokio = "1.29.1"
+tokio = "1.32.0"
 webpki-roots = "0.25.2"
 
 [dependencies.trust-dns-resolver]
@@ -59,5 +60,6 @@ features = [
   "dns-over-quic",
 ]
 
-[patch.crates-io]
-pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
+# For termux
+# [patch.crates-io]
+# pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
