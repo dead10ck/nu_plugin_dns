@@ -182,4 +182,7 @@ choose a different protocol and/or port
 
 ## Install
 
-`cargo install nu_plugin_dns`
+```nu
+cargo install nu_plugin_dns
+register $"($env.CARGO_HOME)/bin/nu_plugin_dns"
+```
