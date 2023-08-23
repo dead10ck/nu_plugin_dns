@@ -27,6 +27,8 @@ nu-protocol = "0.84.0"
 rustls = "0.21.6"
 tokio = "1.32.0"
 webpki-roots = "0.25.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 [dependencies.trust-dns-resolver]
 version = "0.23.0"
@@ -61,5 +63,5 @@ features = [
 ]
 
 # For termux
-[patch.crates-io]
-pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
+# [patch.crates-io]
+# pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }

@@ -6,6 +6,7 @@ use std::{
 use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::{Span, Value};
 
+use tracing_subscriber::prelude::*;
 use trust_dns_client::client::ClientHandle;
 use trust_dns_resolver::config::{Protocol, ResolverConfig};
 
@@ -16,6 +17,7 @@ mod constants;
 mod nu;
 mod serde;
 
+#[derive(Debug)]
 pub struct Dns {}
 
 impl Dns {
@@ -25,6 +27,11 @@ impl Dns {
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+
         match name {
             constants::commands::QUERY => self.query(call, input).await,
             _ => Err(LabeledError {
@@ -93,6 +100,7 @@ impl Dns {
             None => {
                 let (config, _) =
                     trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
+                tracing::debug!(?config);
                 match config.name_servers() {
                     [ns, ..] => (ns.socket_addr, None, ns.protocol),
                     [] => {
