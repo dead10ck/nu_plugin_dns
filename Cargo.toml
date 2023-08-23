@@ -61,5 +61,5 @@ features = [
 ]
 
 # For termux
-# [patch.crates-io]
-# pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
+[patch.crates-io]
+pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }

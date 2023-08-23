@@ -1008,8 +1008,7 @@ checksum = "b45c49fc4f91f35bae654f85ebb3a44d60ac64f11b3166ffa609def390c732d8"
 [[package]]
 name = "pwd"
 version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72c71c0c79b9701efe4e1e4b563b2016dd4ee789eb99badcb09d61ac4b92e4a2"
+source = "git+https://gitlab.com/dead10ck/pwd?branch=termux#3ac69e6460a2967f86dd1e7deb2c073060ca1763"
 dependencies = [
  "libc",
  "thiserror",
