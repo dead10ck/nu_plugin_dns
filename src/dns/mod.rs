@@ -131,7 +131,7 @@ impl Dns {
         })?
         .into_iter()
         .map(|resp: trust_dns_proto::xfer::DnsResponse| {
-            let msg = serde::Message::new(resp.into_inner());
+            let msg = serde::Message::new(resp.into_message());
             msg.into_value(call)
         })
         .collect::<Result<_, _>>()?;

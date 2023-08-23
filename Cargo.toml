@@ -21,15 +21,15 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.28"
-nu-plugin = "0.83.1"
-nu-protocol = "0.83.1"
+nu-plugin = "0.84.0"
+nu-protocol = "0.84.0"
 # must keep in lockstep with trust-dns
-rustls = "0.20.8"
+rustls = "0.21.6"
 tokio = "1.32.0"
 webpki-roots = "0.25.2"
 
 [dependencies.trust-dns-resolver]
-version = "0.22.0"
+version = "0.23.0"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
@@ -39,7 +39,7 @@ features = [
 ]
 
 [dependencies.trust-dns-proto]
-version = "0.22.0"
+version = "0.23.0"
 features = [
   "dnssec-ring",
   "backtrace",
@@ -50,7 +50,7 @@ features = [
 ]
 
 [dependencies.trust-dns-client]
-version = "0.22.0"
+version = "0.23.0"
 features = [
   "dnssec-ring",
   "backtrace",

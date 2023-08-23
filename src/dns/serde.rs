@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::ops::Deref;
 use std::str::FromStr;
 
 use nu_plugin::EvaluatedCall;
@@ -7,10 +8,10 @@ use nu_plugin::LabeledError;
 use nu_protocol::FromValue;
 use nu_protocol::Span;
 use nu_protocol::Value;
-use trust_dns_client::rr::dnssec;
 use trust_dns_client::rr::rdata::key;
 use trust_dns_client::rr::rdata::DNSSECRData;
 use trust_dns_proto::error::ProtoError;
+use trust_dns_proto::rr::dnssec;
 use trust_dns_proto::rr::rdata::opt::EdnsCode;
 use trust_dns_proto::rr::rdata::opt::EdnsOption;
 use trust_dns_proto::rr::rdata::sshfp;
@@ -418,7 +419,8 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::HTTPS(svcb) | trust_dns_proto::rr::RData::SVCB(svcb) => {
+            trust_dns_proto::rr::RData::HTTPS(trust_dns_proto::rr::rdata::HTTPS(svcb))
+            | trust_dns_proto::rr::RData::SVCB(svcb) => {
                 let svc_priority = Value::int(svcb.svc_priority() as i64, Span::unknown());
                 let target_name = Value::string(svcb.target_name().to_string(), Span::unknown());
                 let (svc_params_cols, svc_params_vals) = svcb.svc_params().iter().fold(
@@ -648,55 +650,10 @@ impl RData {
                 Span::unknown(),
             ),
             trust_dns_proto::rr::RData::DNSSEC(dnssec) => match dnssec {
-                DNSSECRData::CDNSKEY(dnskey) | DNSSECRData::DNSKEY(dnskey) => {
-                    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
-                    let secure_entry_point =
-                        Value::bool(dnskey.secure_entry_point(), Span::unknown());
-                    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
-                    let algorithm = Value::string(dnskey.algorithm().to_string(), Span::unknown());
-                    let public_key = Value::binary(dnskey.public_key(), Span::unknown());
-
-                    Value::record(
-                        vec![
-                            "zone_key".into(),
-                            "secure_entry_point".into(),
-                            "revoke".into(),
-                            "algorithm".into(),
-                            "public_key".into(),
-                        ],
-                        vec![zone_key, secure_entry_point, revoke, algorithm, public_key],
-                        Span::unknown(),
-                    )
-                }
-                DNSSECRData::CDS(ds) | DNSSECRData::DS(ds) => {
-                    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
-                    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
-                    let digest_type = Value::string(
-                        Into::<String>::into(match ds.digest_type() {
-                            dnssec::DigestType::SHA1 => "SHA-1",
-                            dnssec::DigestType::SHA256 => "SHA-256",
-                            dnssec::DigestType::GOSTR34_11_94 => "GOST R 34.11-94",
-                            dnssec::DigestType::SHA384 => "SHA-384",
-                            dnssec::DigestType::SHA512 => "SHA-512",
-                            dnssec::DigestType::ED25519 => "ED25519",
-                            _ => "unknown",
-                        }),
-                        Span::unknown(),
-                    );
-                    let digest = Value::binary(ds.digest(), Span::unknown());
-
-                    Value::record(
-                        vec![
-                            "key_tag".into(),
-                            "algorithm".into(),
-                            "digest_type".into(),
-                            "digest".into(),
-                        ],
-                        vec![key_tag, algorithm, digest_type, digest],
-                        Span::unknown(),
-                    )
-                }
-
+                DNSSECRData::DNSKEY(dnskey) => parse_dnskey(&dnskey),
+                DNSSECRData::CDNSKEY(cdnskey) => parse_dnskey(cdnskey),
+                DNSSECRData::DS(ds) => parse_ds(&ds),
+                DNSSECRData::CDS(cds) => parse_ds(cds),
                 DNSSECRData::KEY(key) => {
                     let (key_authentication_prohibited, key_confidentiality_prohibited) =
                         match key.key_trust() {
@@ -767,7 +724,7 @@ impl RData {
                         key::Protocol::Reserved => Value::string("RESERVED", Span::unknown()),
                         key::Protocol::TLS => Value::string("TLS", Span::unknown()),
                         key::Protocol::Email => Value::string("EMAIL", Span::unknown()),
-                        key::Protocol::DNSSec => Value::string("DNSSEC", Span::unknown()),
+                        key::Protocol::DNSSEC => Value::string("DNSSEC", Span::unknown()),
                         key::Protocol::IPSec => Value::string("IPSEC", Span::unknown()),
                         key::Protocol::Other(code) => Value::int(code as i64, Span::unknown()),
                         key::Protocol::All => Value::string("ALL", Span::unknown()),
@@ -964,6 +921,53 @@ impl RData {
 
         Ok(val)
     }
+}
+
+fn parse_ds<D: Deref<Target = dnssec::rdata::DS>>(ds: D) -> Value {
+    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
+    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
+    let digest_type = Value::string(
+        Into::<String>::into(match ds.digest_type() {
+            dnssec::DigestType::SHA1 => "SHA-1",
+            dnssec::DigestType::SHA256 => "SHA-256",
+            dnssec::DigestType::GOSTR34_11_94 => "GOST R 34.11-94",
+            dnssec::DigestType::SHA384 => "SHA-384",
+            dnssec::DigestType::SHA512 => "SHA-512",
+            dnssec::DigestType::ED25519 => "ED25519",
+            _ => "unknown",
+        }),
+        Span::unknown(),
+    );
+    let digest = Value::binary(ds.digest(), Span::unknown());
+    Value::record(
+        vec![
+            "key_tag".into(),
+            "algorithm".into(),
+            "digest_type".into(),
+            "digest".into(),
+        ],
+        vec![key_tag, algorithm, digest_type, digest],
+        Span::unknown(),
+    )
+}
+
+fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
+    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
+    let secure_entry_point = Value::bool(dnskey.secure_entry_point(), Span::unknown());
+    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
+    let algorithm = Value::string(dnskey.algorithm().to_string(), Span::unknown());
+    let public_key = Value::binary(dnskey.public_key(), Span::unknown());
+    Value::record(
+        vec![
+            "zone_key".into(),
+            "secure_entry_point".into(),
+            "revoke".into(),
+            "algorithm".into(),
+            "public_key".into(),
+        ],
+        vec![zone_key, secure_entry_point, revoke, algorithm, public_key],
+        Span::unknown(),
+    )
 }
 
 pub struct Edns(pub(crate) trust_dns_proto::op::Edns);
