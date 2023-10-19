@@ -1,6 +1,6 @@
 [package]
 name = "nu_plugin_dns"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Skyler Hawthorne <skyler@dead10ck.dev>"]
 description = "A DNS utility for nushell"
 
@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["dns", "dig", "nu", "nushell", "plugin"]
 categories = ["command-line-utilities"]
 exclude = [ ".github/" ]
+
+[package.metadata.release]
+allow-branch = [ "main" ]
+
 
 [[bin]]
 name = "nu_plugin_dns"
