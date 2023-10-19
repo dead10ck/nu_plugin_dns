@@ -42,7 +42,7 @@ impl Plugin for Dns {
             .named(
                 constants::flags::DNSSEC,
                 SyntaxShape::String,
-                r##"Perform DNSSEC validation on records. Choices are: "none", "strict" (error if record has no RRSIG or does not validate), "opportunistic" (validate if RRSIGs present, otherwise no validation; default)"##,
+                "Perform DNSSEC validation on records. Choices are: \"none\", \"strict\" (error if record has no RRSIG or does not validate), \"opportunistic\" (validate if RRSIGs present, otherwise no validation; default)",
                 Some('d'),
             )
             .named(

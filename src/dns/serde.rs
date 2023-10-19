@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 use nu_plugin::EvaluatedCall;
 use nu_plugin::LabeledError;
+use nu_protocol::record;
 use nu_protocol::FromValue;
 use nu_protocol::Span;
 use nu_protocol::Value;
@@ -34,15 +35,17 @@ where
 
     if call.has_flag(constants::flags::CODE) {
         Value::record(
-            Vec::from_iter(
-                constants::columns::CODE_COLS
-                    .iter()
-                    .map(|s| String::from(*s)),
-            ),
-            vec![
-                code_string,
-                Value::int(Into::<u16>::into(code) as i64, Span::unknown()),
-            ],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(
+                    constants::columns::CODE_COLS
+                        .iter()
+                        .map(|s| String::from(*s)),
+                ),
+                vec![
+                    code_string,
+                    Value::int(Into::<u16>::into(code) as i64, Span::unknown()),
+                ],
+            )),
             Span::unknown(),
         )
     } else {
@@ -58,15 +61,17 @@ where
 
     if call.has_flag(constants::flags::CODE) {
         Value::record(
-            Vec::from_iter(
-                constants::columns::CODE_COLS
-                    .iter()
-                    .map(|s| String::from(*s)),
-            ),
-            vec![
-                code_string,
-                Value::int(Into::<u8>::into(code) as i64, Span::unknown()),
-            ],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(
+                    constants::columns::CODE_COLS
+                        .iter()
+                        .map(|s| String::from(*s)),
+                ),
+                vec![
+                    code_string,
+                    Value::int(Into::<u8>::into(code) as i64, Span::unknown()),
+                ],
+            )),
             Span::unknown(),
         )
     } else {
@@ -100,7 +105,7 @@ impl Message {
         let mut parts = message.into_parts();
 
         let question = parts.queries.pop().map_or_else(
-            || Value::record(Vec::default(), Vec::default(), Span::unknown()),
+            || Value::record(record!(), Span::unknown()),
             |q| Query(q).into_value(call),
         );
 
@@ -124,8 +129,10 @@ impl Message {
             .unwrap_or(Value::nothing(Span::unknown()));
 
         Ok(Value::record(
-            Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
-            vec![header, question, answer, authority, additional, edns, size],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
+                vec![header, question, answer, authority, additional, edns, size],
+            )),
             Span::unknown(),
         ))
     }
@@ -142,15 +149,17 @@ impl<'r> Header<'r> {
         let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
         let message_type = if call.has_flag(constants::flags::CODE) {
             Value::record(
-                Vec::from_iter(
-                    constants::columns::CODE_COLS
-                        .iter()
-                        .map(|s| String::from(*s)),
-                ),
-                vec![
-                    message_type_string,
-                    Value::int(header.message_type() as i64, Span::unknown()),
-                ],
+                nu_protocol::Record::from_iter(std::iter::zip(
+                    Vec::from_iter(
+                        constants::columns::CODE_COLS
+                            .iter()
+                            .map(|s| String::from(*s)),
+                    ),
+                    vec![
+                        message_type_string,
+                        Value::int(header.message_type() as i64, Span::unknown()),
+                    ],
+                )),
                 Span::unknown(),
             )
         } else {
@@ -170,22 +179,24 @@ impl<'r> Header<'r> {
         let additional_count = Value::int(header.additional_count().into(), Span::unknown());
 
         Value::record(
-            Vec::from_iter(constants::columns::HEADER_COLS.iter().map(|s| (*s).into())),
-            vec![
-                id,
-                message_type,
-                op_code,
-                authoritative,
-                truncated,
-                recursion_desired,
-                recursion_available,
-                authentic_data,
-                response_code,
-                query_count,
-                answer_count,
-                name_server_count,
-                additional_count,
-            ],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(constants::columns::HEADER_COLS.iter().map(|s| (*s).into())),
+                vec![
+                    id,
+                    message_type,
+                    op_code,
+                    authoritative,
+                    truncated,
+                    recursion_desired,
+                    recursion_available,
+                    authentic_data,
+                    response_code,
+                    query_count,
+                    answer_count,
+                    name_server_count,
+                    additional_count,
+                ],
+            )),
             Span::unknown(),
         )
     }
@@ -202,8 +213,10 @@ impl Query {
         let class = code_to_record_u16(query.query_class(), call);
 
         Value::record(
-            Vec::from_iter(constants::columns::QUERY_COLS.iter().map(|s| (*s).into())),
-            vec![name, qtype, class],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(constants::columns::QUERY_COLS.iter().map(|s| (*s).into())),
+                vec![name, qtype, class],
+            )),
             Span::unknown(),
         )
     }
@@ -232,11 +245,13 @@ impl Query {
         match value {
             // If a record is given, it must have at least a name and qtype and
             // will be used as is, overriding any command line arguments.
-            rec @ Value::Record { span, .. } => {
+            rec @ Value::Record { .. } => {
+                let span = rec.span();
+
                 let must_have_col_err = |col| LabeledError {
                     label: "InvalidInputError".into(),
                     msg: format!("Record must have a column named '{}'", col),
-                    span: Some(*span),
+                    span: Some(span),
                 };
 
                 let name = Name::from_utf8(
@@ -247,13 +262,13 @@ impl Query {
                     .map_err(|err| LabeledError {
                         label: "InvalidValueError".into(),
                         msg: format!("Could not convert value to String: {}", err),
-                        span: Some(*span),
+                        span: Some(span),
                     })?,
                 )
                 .map_err(|err| LabeledError {
                     label: "InvalidNameError".into(),
                     msg: format!("Could not convert string to name: {}", err),
-                    span: Some(*span),
+                    span: Some(span),
                 })?;
 
                 let qtype = RType::try_from(
@@ -275,11 +290,13 @@ impl Query {
 
             // If any other input type is given, the CLI flags fill in the type
             // and class.
-            Value::String { val, span } => {
+            str_val @ Value::String { val, .. } => {
+                let span = str_val.span();
+
                 let name = Name::from_utf8(val).map_err(|err| LabeledError {
                     label: "InvalidNameError".into(),
                     msg: format!("Error parsing name: {}", err),
-                    span: Some(*span),
+                    span: Some(span),
                 })?;
 
                 let queries = qtypes
@@ -293,7 +310,9 @@ impl Query {
 
                 Ok(queries)
             }
-            Value::List { vals, span } => {
+            list @ Value::List { vals, .. } => {
+                let span = list.span();
+
                 let name = Name::from_labels(
                     vals.iter()
                         .map(|val| match val {
@@ -301,7 +320,7 @@ impl Query {
                             _ => Err(LabeledError {
                                 label: "InvalidNameError".into(),
                                 msg: "Invalid input type for name".into(),
-                                span: Some(val.span()?),
+                                span: Some(val.span()),
                             }),
                         })
                         .collect::<Result<Vec<_>, _>>()?,
@@ -309,7 +328,7 @@ impl Query {
                 .map_err(|err| LabeledError {
                     label: "NameParseError".into(),
                     msg: format!("Error parsing into name: {}", err),
-                    span: Some(*span),
+                    span: Some(span),
                 })?;
 
                 let queries = qtypes
@@ -326,7 +345,7 @@ impl Query {
             val => Err(LabeledError {
                 label: "InvalidInputTypeError".into(),
                 msg: "Invalid input type".into(),
-                span: Some(val.span()?),
+                span: Some(val.span()),
             }),
         }
     }
@@ -349,8 +368,10 @@ impl Record {
         };
 
         Ok(Value::record(
-            Vec::from_iter(constants::columns::RECORD_COLS.iter().map(|s| (*s).into())),
-            vec![name, rtype, class, ttl, rdata],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(constants::columns::RECORD_COLS.iter().map(|s| (*s).into())),
+                vec![name, rtype, class, ttl, rdata],
+            )),
             Span::unknown(),
         ))
     }
@@ -382,11 +403,16 @@ impl RData {
                             .collect();
 
                         Value::record(
-                            vec!["issuer_name".into(), "parameters".into()],
-                            vec![
-                                issuer_name,
-                                Value::record_from_hashmap(&parameters, Span::unknown()),
-                            ],
+                            nu_protocol::Record::from_iter(std::iter::zip(
+                                vec!["issuer_name".into(), "parameters".into()],
+                                vec![
+                                    issuer_name,
+                                    Value::record(
+                                        nu_protocol::Record::from_iter(parameters),
+                                        Span::unknown(),
+                                    ),
+                                ],
+                            )),
                             Span::unknown(),
                         )
                     }
@@ -399,8 +425,11 @@ impl RData {
                 };
 
                 Value::record(
-                    vec!["issuer_critical".into(), "tag".into(), "value".into()],
-                    vec![issuer_ctitical, tag, value],
+                    record![
+                        "issuer_critical" => issuer_ctitical,
+                        "tag"             => tag,
+                        "value"           => value,
+                    ],
                     Span::unknown(),
                 )
             }
@@ -413,8 +442,10 @@ impl RData {
                 let os = util::string_or_binary(hinfo.os());
 
                 Value::record(
-                    vec!["cpu".into(), "os".into()],
-                    vec![cpu, os],
+                    record!(
+                        "cpu" => cpu,
+                        "os"  => os,
+                    ),
                     Span::unknown(),
                 )
             }
@@ -423,65 +454,61 @@ impl RData {
             | trust_dns_proto::rr::RData::SVCB(svcb) => {
                 let svc_priority = Value::int(svcb.svc_priority() as i64, Span::unknown());
                 let target_name = Value::string(svcb.target_name().to_string(), Span::unknown());
-                let (svc_params_cols, svc_params_vals) = svcb.svc_params().iter().fold(
-                    (Vec::new(), Vec::new()),
-                    |(mut columns, mut values), (key, value)| {
-                        let value = match value {
-                            SvcParamValue::Mandatory(param_keys) => Value::list(
-                                param_keys
-                                    .0
-                                    .iter()
-                                    .map(|key| Value::string(key.to_string(), Span::unknown()))
-                                    .collect(),
-                                Span::unknown(),
-                            ),
-                            SvcParamValue::Alpn(alpn) => Value::list(
-                                alpn.0
-                                    .iter()
-                                    .map(|alpn| Value::string(alpn, Span::unknown()))
-                                    .collect(),
-                                Span::unknown(),
-                            ),
-                            nda @ SvcParamValue::NoDefaultAlpn => {
-                                Value::string(nda.to_string(), Span::unknown())
-                            }
-                            SvcParamValue::Port(port) => Value::int(*port as i64, Span::unknown()),
-                            SvcParamValue::Ipv4Hint(IpHint(ipv4s)) => Value::list(
-                                ipv4s
-                                    .iter()
-                                    .map(|ip| Value::string(ip.to_string(), Span::unknown()))
-                                    .collect(),
-                                Span::unknown(),
-                            ),
-                            SvcParamValue::EchConfig(EchConfig(config)) => {
-                                Value::binary(config.clone(), Span::unknown())
-                            }
-                            SvcParamValue::Ipv6Hint(IpHint(ipv6s)) => Value::list(
-                                ipv6s
-                                    .iter()
-                                    .map(|ip| Value::string(ip.to_string(), Span::unknown()))
-                                    .collect(),
-                                Span::unknown(),
-                            ),
-                            SvcParamValue::Unknown(Unknown(bytes)) => {
-                                Value::binary(bytes.clone(), Span::unknown())
-                            }
-                        };
+                let svc_params = svcb.svc_params().iter().map(|(key, value)| {
+                    let value = match value {
+                        SvcParamValue::Mandatory(param_keys) => Value::list(
+                            param_keys
+                                .0
+                                .iter()
+                                .map(|key| Value::string(key.to_string(), Span::unknown()))
+                                .collect(),
+                            Span::unknown(),
+                        ),
+                        SvcParamValue::Alpn(alpn) => Value::list(
+                            alpn.0
+                                .iter()
+                                .map(|alpn| Value::string(alpn, Span::unknown()))
+                                .collect(),
+                            Span::unknown(),
+                        ),
+                        nda @ SvcParamValue::NoDefaultAlpn => {
+                            Value::string(nda.to_string(), Span::unknown())
+                        }
+                        SvcParamValue::Port(port) => Value::int(*port as i64, Span::unknown()),
+                        SvcParamValue::Ipv4Hint(IpHint(ipv4s)) => Value::list(
+                            ipv4s
+                                .iter()
+                                .map(|ip| Value::string(ip.to_string(), Span::unknown()))
+                                .collect(),
+                            Span::unknown(),
+                        ),
+                        SvcParamValue::EchConfig(EchConfig(config)) => {
+                            Value::binary(config.clone(), Span::unknown())
+                        }
+                        SvcParamValue::Ipv6Hint(IpHint(ipv6s)) => Value::list(
+                            ipv6s
+                                .iter()
+                                .map(|ip| Value::string(ip.to_string(), Span::unknown()))
+                                .collect(),
+                            Span::unknown(),
+                        ),
+                        SvcParamValue::Unknown(Unknown(bytes)) => {
+                            Value::binary(bytes.clone(), Span::unknown())
+                        }
+                    };
 
-                        columns.push(key.to_string());
-                        values.push(value);
-                        (columns, values)
-                    },
-                );
-                let svc_params = Value::record(svc_params_cols, svc_params_vals, Span::unknown());
+                    (key.to_string(), value)
+                });
+
+                let svc_params =
+                    Value::record(nu_protocol::Record::from_iter(svc_params), Span::unknown());
 
                 Value::record(
-                    vec![
-                        "svc_priority".into(),
-                        "target_name".into(),
-                        "svc_params".into(),
-                    ],
-                    vec![svc_priority, target_name, svc_params],
+                    record!(
+                        "svc_priority" => svc_priority,
+                        "target_name"  => target_name,
+                        "svc_params"   => svc_params,
+                    ),
                     Span::unknown(),
                 )
             }
@@ -491,8 +518,10 @@ impl RData {
                 let exchange = Value::string(mx.exchange().to_string(), Span::unknown());
 
                 Value::record(
-                    vec!["preference".into(), "exchange".into()],
-                    vec![preference, exchange],
+                    record![
+                        "preference" => preference,
+                        "exchange"   => exchange
+                    ],
                     Span::unknown(),
                 )
             }
@@ -506,15 +535,14 @@ impl RData {
                 let replacement = Value::string(naptr.replacement().to_string(), Span::unknown());
 
                 Value::record(
-                    vec![
-                        "order".into(),
-                        "preference".into(),
-                        "flags".into(),
-                        "services".into(),
-                        "regexp".into(),
-                        "replacement".into(),
+                    record![
+                        "order"       => order,
+                        "preference"  => preference,
+                        "flags"       => flags,
+                        "services"    => services,
+                        "regexp"      => regexp,
+                        "replacement" => replacement,
                     ],
-                    vec![order, preference, flags, services, regexp, replacement],
                     Span::unknown(),
                 )
             }
@@ -539,16 +567,15 @@ impl RData {
                 let minimum = util::sec_to_duration(soa.minimum() as u64);
 
                 Value::record(
-                    vec![
-                        "mname".into(),
-                        "rname".into(),
-                        "serial".into(),
-                        "refresh".into(),
-                        "retry".into(),
-                        "expire".into(),
-                        "minimum".into(),
+                    record![
+                        "mname"   => mname,
+                        "rname"   => rname,
+                        "serial"  => serial,
+                        "refresh" => refresh,
+                        "retry"   => retry,
+                        "expire"  => expire,
+                        "minimum" => minimum,
                     ],
-                    vec![mname, rname, serial, refresh, retry, expire, minimum],
                     Span::unknown(),
                 )
             }
@@ -560,13 +587,12 @@ impl RData {
                 let target = Value::string(srv.target().to_string(), Span::unknown());
 
                 Value::record(
-                    vec![
-                        "priority".into(),
-                        "weight".into(),
-                        "port".into(),
-                        "target".into(),
+                    record![
+                        "priority" => priority,
+                        "weight"   => weight,
+                        "port"     => port,
+                        "target"   => target
                     ],
-                    vec![priority, weight, port, target],
                     Span::unknown(),
                 )
             }
@@ -594,12 +620,11 @@ impl RData {
                 let fingerprint = Value::binary(sshfp.fingerprint(), Span::unknown());
 
                 Value::record(
-                    vec![
-                        "algorithm".into(),
-                        "fingerprint_type".into(),
-                        "fingerprint".into(),
+                    record![
+                        "algorithm"        => algorithm,
+                        "fingerprint_type" => fingerprint_type,
+                        "fingerprint"      => fingerprint,
                     ],
-                    vec![algorithm, fingerprint_type, fingerprint],
                     Span::unknown(),
                 )
             }
@@ -633,13 +658,12 @@ impl RData {
                 let cert_data = Value::binary(tlsa.cert_data(), Span::unknown());
 
                 Value::record(
-                    vec![
-                        "cert_usage".into(),
-                        "selector".into(),
-                        "matching".into(),
-                        "cert_data".into(),
+                    record![
+                        "cert_usage" => cert_usage,
+                        "selector"   => selector,
+                        "matching"   => matching,
+                        "cert_data"  => cert_data,
                     ],
-                    vec![cert_usage, selector, matching, cert_data],
                     Span::unknown(),
                 )
             }
@@ -676,13 +700,9 @@ impl RData {
                         };
 
                     let key_type = Value::record(
-                        vec![
-                            "authentication_prohibited".into(),
-                            "confidentiality_prohibited".into(),
-                        ],
-                        vec![
-                            key_authentication_prohibited,
-                            key_confidentiality_prohibited,
+                        record![
+                            "authentication_prohibited" => key_authentication_prohibited,
+                            "confidentiality_prohibited" => key_confidentiality_prohibited,
                         ],
                         Span::unknown(),
                     );
@@ -699,23 +719,15 @@ impl RData {
                     );
 
                     let key_signatory = key.signatory();
+
+                    #[allow(deprecated)]
                     let signatory = Value::record(
-                        vec![
-                            "zone".into(),
-                            "strong".into(),
-                            "unique".into(),
-                            "general".into(),
+                        record![
+                            "zone"    => Value::bool(key_signatory.zone, Span::unknown()),
+                            "strong"  => Value::bool(key_signatory.strong, Span::unknown()),
+                            "unique"  => Value::bool(key_signatory.unique, Span::unknown()),
+                            "general" => Value::bool(key_signatory.general, Span::unknown()),
                         ],
-                        #[allow(deprecated)]
-                        vec![
-                            key_signatory.zone,
-                            key_signatory.strong,
-                            key_signatory.unique,
-                            key_signatory.general,
-                        ]
-                        .into_iter()
-                        .map(|sig| Value::bool(sig, Span::unknown()))
-                        .collect(),
                         Span::unknown(),
                     );
 
@@ -734,21 +746,13 @@ impl RData {
                     let public_key = Value::binary(key.public_key(), Span::unknown());
 
                     Value::record(
-                        vec![
-                            "key_type".into(),
-                            "key_name_type".into(),
-                            "signatory".into(),
-                            "protocol".into(),
-                            "algorithm".into(),
-                            "public_key".into(),
-                        ],
-                        vec![
-                            key_type,
-                            key_name_type,
-                            signatory,
-                            protocol,
-                            algorithm,
-                            public_key,
+                        record![
+                            "key_type"      => key_type,
+                            "key_name_type" => key_name_type,
+                            "signatory"     => signatory,
+                            "protocol"      => protocol,
+                            "algorithm"     => algorithm,
+                            "public_key"    => public_key,
                         ],
                         Span::unknown(),
                     )
@@ -765,8 +769,10 @@ impl RData {
                     );
 
                     Value::record(
-                        vec!["next_domain_name".into(), "types".into()],
-                        vec![next_domain_name, types],
+                        record![
+                            "next_domain_name" => next_domain_name,
+                            "types"            => types,
+                        ],
                         Span::unknown(),
                     )
                 }
@@ -792,21 +798,13 @@ impl RData {
                     );
 
                     Value::record(
-                        vec![
-                            "hash_algorithm".into(),
-                            "opt_out".into(),
-                            "iterations".into(),
-                            "salt".into(),
-                            "next_hashed_owner_name".into(),
-                            "types".into(),
-                        ],
-                        vec![
-                            hash_algorithm,
-                            opt_out,
-                            iterations,
-                            salt,
-                            next_hashed_owner_name,
-                            types,
+                        record![
+                            "hash_algorithm"         => hash_algorithm,
+                            "opt_out"                => opt_out,
+                            "iterations"             => iterations,
+                            "salt"                   => salt,
+                            "next_hashed_owner_name" => next_hashed_owner_name,
+                            "types"                  => types,
                         ],
                         Span::unknown(),
                     )
@@ -824,14 +822,13 @@ impl RData {
                     let flags = Value::int(nsec3param.flags() as i64, Span::unknown());
 
                     Value::record(
-                        vec![
-                            "hash_algorithm".into(),
-                            "opt_out".into(),
-                            "iterations".into(),
-                            "salt".into(),
-                            "flags".into(),
+                        record![
+                            "hash_algorithm" => hash_algorithm,
+                            "opt_out"        => opt_out,
+                            "iterations"     => iterations,
+                            "salt"           => salt,
+                            "flags"          => flags,
                         ],
-                        vec![hash_algorithm, opt_out, iterations, salt, flags],
                         Span::unknown(),
                     )
                 }
@@ -848,27 +845,16 @@ impl RData {
                     let sig = Value::binary(sig.sig(), Span::unknown());
 
                     Value::record(
-                        vec![
-                            "type_covered".into(),
-                            "algorithm".into(),
-                            "num_labels".into(),
-                            "original_ttl".into(),
-                            "signature_expiration".into(),
-                            "signature_inception".into(),
-                            "key_tag".into(),
-                            "signer_name".into(),
-                            "signature".into(),
-                        ],
-                        vec![
-                            type_covered,
-                            algorithm,
-                            num_labels,
-                            original_ttl,
-                            sig_expiration,
-                            sig_inception,
-                            key_tag,
-                            signer_name,
-                            sig,
+                        record![
+                            "type_covered"         => type_covered,
+                            "algorithm"            => algorithm,
+                            "num_labels"           => num_labels,
+                            "original_ttl"         => original_ttl,
+                            "signature_expiration" => sig_expiration,
+                            "signature_inception"  => sig_inception,
+                            "key_tag"              => key_tag,
+                            "signer_name"          => signer_name,
+                            "signature"            => sig,
                         ],
                         Span::unknown(),
                     )
@@ -884,35 +870,31 @@ impl RData {
                     // let other = Value::binary(tsig.other(), Span::unknown());
 
                     Value::record(
-                        vec![
-                            "algorithm".into(),
-                            "time".into(),
-                            "fudge".into(),
-                            "mac".into(),
-                            // "oid".into(),
-                            // "error".into(),
-                            // "other".into(),
+                        record![
+                            "algorithm" => algorithm,
+                            "time"      => time,
+                            "fudge"     => fudge,
+                            "mac"       => mac,
+                            // "oid"      => oid,
+                            // "error"    => error,
+                            // "other"    => other,
                         ],
-                        // vec![algorithm, time, fudge, mac, oid, error, other],
-                        vec![algorithm, time, fudge, mac],
                         Span::unknown(),
                     )
                 }
                 DNSSECRData::Unknown { code, rdata } => Value::record(
-                    vec!["code".into(), "rdata".into()],
-                    vec![
-                        Value::int(code as i64, Span::unknown()),
-                        Value::binary(rdata.anything(), Span::unknown()),
+                    record![
+                        "code"  => Value::int(code as i64, Span::unknown()),
+                        "rdata" => Value::binary(rdata.anything(), Span::unknown()),
                     ],
                     Span::unknown(),
                 ),
                 rdata => Value::string(rdata.to_string(), Span::unknown()),
             },
             trust_dns_proto::rr::RData::Unknown { code, rdata } => Value::record(
-                vec!["code".into(), "rdata".into()],
-                vec![
-                    Value::int(code as i64, Span::unknown()),
-                    Value::binary(rdata.anything(), Span::unknown()),
+                record![
+                    "code"  => Value::int(code as i64, Span::unknown()),
+                    "rdata" => Value::binary(rdata.anything(), Span::unknown()),
                 ],
                 Span::unknown(),
             ),
@@ -940,13 +922,12 @@ fn parse_ds<D: Deref<Target = dnssec::rdata::DS>>(ds: D) -> Value {
     );
     let digest = Value::binary(ds.digest(), Span::unknown());
     Value::record(
-        vec![
-            "key_tag".into(),
-            "algorithm".into(),
-            "digest_type".into(),
-            "digest".into(),
+        record![
+            "key_tag"     => key_tag,
+            "algorithm"   => algorithm,
+            "digest_type" => digest_type,
+            "digest"      => digest,
         ],
-        vec![key_tag, algorithm, digest_type, digest],
         Span::unknown(),
     )
 }
@@ -958,14 +939,13 @@ fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
     let algorithm = Value::string(dnskey.algorithm().to_string(), Span::unknown());
     let public_key = Value::binary(dnskey.public_key(), Span::unknown());
     Value::record(
-        vec![
-            "zone_key".into(),
-            "secure_entry_point".into(),
-            "revoke".into(),
-            "algorithm".into(),
-            "public_key".into(),
+        record![
+            "zone_key"           => zone_key,
+            "secure_entry_point" => secure_entry_point,
+            "revoke"             => revoke,
+            "algorithm"          => algorithm,
+            "public_key"         => public_key,
         ],
-        vec![zone_key, secure_entry_point, revoke, algorithm, public_key],
         Span::unknown(),
     )
 }
@@ -982,14 +962,13 @@ impl Edns {
         let opts = Opt(edns.options()).into_value(call);
 
         Value::record(
-            vec![
-                "rcode_high".into(),
-                "version".into(),
-                "dnssec_ok".into(),
-                "max_payload".into(),
-                "opts".into(),
+            record![
+                "rcode_high"  => rcode_high,
+                "version"     => version,
+                "dnssec_ok"   => dnssec_ok,
+                "max_payload" => max_payload,
+                "opts"        => opts,
             ],
-            vec![rcode_high, version, dnssec_ok, max_payload, opts],
             Span::unknown(),
         )
     }
@@ -1033,10 +1012,9 @@ impl<'o> Opt<'o> {
                         Span::unknown(),
                     ),
                     EdnsOption::Unknown(code, val) => Value::record(
-                        vec!["code".into(), "data".into()],
-                        vec![
-                            Value::int(*code as i64, Span::unknown()),
-                            util::string_or_binary(val.clone()),
+                        record![
+                            "code" => Value::int(*code as i64, Span::unknown()),
+                            "data" => util::string_or_binary(val.clone()),
                         ],
                         Span::unknown(),
                     ),
@@ -1047,7 +1025,7 @@ impl<'o> Opt<'o> {
             })
             .collect();
 
-        Value::record_from_hashmap(&opts, Span::unknown())
+        Value::record(nu_protocol::Record::from_iter(opts), Span::unknown())
     }
 }
 
@@ -1064,17 +1042,18 @@ impl TryFrom<Value> for RType {
         };
 
         match value {
-            Value::String { val, span } => Ok(RType(
-                RecordType::from_str(&val.to_uppercase()).map_err(|err| qtype_err(err, span))?,
+            Value::String { .. } => Ok(RType(
+                RecordType::from_str(&value.as_string().unwrap().to_uppercase())
+                    .map_err(|err| qtype_err(err, value.span()))?,
             )),
-            Value::Int { val, span } => {
+            Value::Int { val, .. } => {
                 let rtype = RecordType::from(val as u16);
 
                 if let RecordType::Unknown(r) = rtype {
                     return Err(LabeledError {
                         label: "InvalidRecordType".into(),
                         msg: format!("Error parsing record type: unknown code: {}", r),
-                        span: Some(span),
+                        span: Some(value.span()),
                     });
                 }
 
@@ -1083,7 +1062,7 @@ impl TryFrom<Value> for RType {
             value => Err(LabeledError {
                 label: "InvalidRecordType".into(),
                 msg: "Invalid type for record type argument. Must be either string or int.".into(),
-                span: Some(value.span()?),
+                span: Some(value.span()),
             }),
         }
     }
@@ -1102,20 +1081,20 @@ impl TryFrom<Value> for DNSClass {
         };
 
         let dns_class: DNSClass = match value {
-            Value::String { val, span } => DNSClass(
-                trust_dns_proto::rr::DNSClass::from_str(&val.to_uppercase())
-                    .map_err(|err| class_err(err, span))?,
+            Value::String { .. } => DNSClass(
+                trust_dns_proto::rr::DNSClass::from_str(&value.as_string().unwrap().to_uppercase())
+                    .map_err(|err| class_err(err, value.span()))?,
             ),
-            Value::Int { val, span } => DNSClass(
+            Value::Int { val, .. } => DNSClass(
                 trust_dns_proto::rr::DNSClass::from_u16(val as u16)
-                    .map_err(|err| class_err(err, span))?,
+                    .map_err(|err| class_err(err, value.span()))?,
             ),
             value => {
                 return Err(LabeledError {
                     label: "InvalidClassType".into(),
                     msg: "Invalid type for class type argument. Must be either string or int."
                         .into(),
-                    span: Some(value.span()?),
+                    span: Some(value.span()),
                 });
             }
         };
@@ -1131,7 +1110,7 @@ impl TryFrom<Value> for Protocol {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         let result = match value {
-            Value::String { val, span } => match val.to_uppercase().as_str() {
+            Value::String { .. } => match value.as_string().unwrap().to_uppercase().as_str() {
                 "UDP" => Protocol(trust_dns_resolver::config::Protocol::Udp),
                 "TCP" => Protocol(trust_dns_resolver::config::Protocol::Tcp),
                 "TLS" => Protocol(trust_dns_resolver::config::Protocol::Tls),
@@ -1141,7 +1120,7 @@ impl TryFrom<Value> for Protocol {
                     return Err(LabeledError {
                         label: "InvalidProtocol".into(),
                         msg: format!("Invalid or unsupported protocol: {proto}"),
-                        span: Some(span),
+                        span: Some(value.span()),
                     })
                 }
             },
@@ -1149,7 +1128,7 @@ impl TryFrom<Value> for Protocol {
                 return Err(LabeledError {
                     label: "InvalidInput".into(),
                     msg: "Input must be a string".into(),
-                    span: Some(value.span()?),
+                    span: Some(value.span()),
                 })
             }
         };
@@ -1172,7 +1151,7 @@ impl TryFrom<Value> for DnssecMode {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
-            Value::String { val, span } => Ok(match val.to_uppercase().as_str() {
+            Value::String { .. } => Ok(match value.as_string().unwrap().to_uppercase().as_str() {
                 "NONE" => DnssecMode::None,
                 "STRICT" => DnssecMode::Strict,
                 "OPPORTUNISTIC" => DnssecMode::Opportunistic,
@@ -1181,14 +1160,14 @@ impl TryFrom<Value> for DnssecMode {
                         label: "InvalidDnssecModeError".into(),
                         msg: "Invalid DNSSEC mode. Must be one of: none, strict, opportunistic"
                             .into(),
-                        span: Some(span),
+                        span: Some(value.span()),
                     });
                 }
             }),
             _ => Err(LabeledError {
                 label: "InvalidInputError".into(),
                 msg: "Input must be a string".into(),
-                span: Some(value.span()?),
+                span: Some(value.span()),
             }),
         }
     }

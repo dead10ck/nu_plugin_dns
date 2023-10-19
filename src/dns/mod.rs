@@ -4,7 +4,7 @@ use std::{
 };
 
 use nu_plugin::{EvaluatedCall, LabeledError};
-use nu_protocol::{Span, Value};
+use nu_protocol::{record, Span, Value};
 
 use tracing_subscriber::prelude::*;
 use trust_dns_client::client::ClientHandle;
@@ -67,7 +67,7 @@ impl Dns {
                     return Err(LabeledError {
                         label: "AmbiguousInputError".into(),
                         msg: "Input should either be positional args or piped, but not both".into(),
-                        span: Some(val.span()?),
+                        span: Some(val.span()),
                     });
                 }
 
@@ -81,21 +81,21 @@ impl Dns {
         };
 
         let (addr, addr_span, protocol) = match call.get_flag_value(flags::SERVER) {
-            Some(Value::String { val, span }) => {
+            Some(ref value @ Value::String { .. }) => {
                 let protocol = protocol.unwrap_or(Protocol::Udp);
-                let addr = SocketAddr::from_str(&val)
+                let addr = SocketAddr::from_str(&value.as_string().unwrap())
                     .or_else(|_| {
-                        IpAddr::from_str(&val).map(|ip| {
+                        IpAddr::from_str(&value.as_string().unwrap()).map(|ip| {
                             SocketAddr::new(ip, constants::config::default_port(protocol))
                         })
                     })
                     .map_err(|err| LabeledError {
                         label: "InvalidServerAddress".into(),
                         msg: format!("Invalid server: {}", err),
-                        span: Some(span),
+                        span: Some(value.clone().span()),
                     })?;
 
-                (addr, Some(span), protocol)
+                (addr, Some(value.span()), protocol)
             }
             None => {
                 let (config, _) =
@@ -117,7 +117,7 @@ impl Dns {
                 return Err(LabeledError {
                     label: "InvalidServerAddressInputError".into(),
                     msg: "invalid input type for server address".into(),
-                    span: Some(val.span()?),
+                    span: Some(val.span()),
                 })
             }
         };
@@ -145,21 +145,19 @@ impl Dns {
         .collect::<Result<_, _>>()?;
 
         let result = Value::record(
-            Vec::from_iter(constants::columns::TOP_COLS.iter().map(|s| (*s).into())),
-            vec![
-                Value::record(
-                    vec![
-                        constants::columns::ADDRESS.into(),
-                        constants::columns::PROTOCOL.into(),
-                    ],
-                    vec![
-                        Value::string(addr.to_string(), Span::unknown()),
-                        Value::string(protocol.to_string(), Span::unknown()),
-                    ],
-                    Span::unknown(),
-                ),
-                Value::list(messages, Span::unknown()),
-            ],
+            nu_protocol::Record::from_iter(std::iter::zip(
+                Vec::from_iter(constants::columns::TOP_COLS.iter().map(|s| (*s).into())),
+                vec![
+                    Value::record(
+                        record![
+                            constants::columns::ADDRESS => Value::string(addr.to_string(), Span::unknown()),
+                            constants::columns::PROTOCOL => Value::string(protocol.to_string(), Span::unknown()),
+                        ],
+                        Span::unknown(),
+                    ),
+                    Value::list(messages, Span::unknown()),
+                ],
+            )),
             Span::unknown(),
         );
 
