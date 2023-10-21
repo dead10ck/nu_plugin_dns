@@ -3,27 +3,27 @@ use std::fmt::Display;
 use std::ops::Deref;
 use std::str::FromStr;
 
+use hickory_client::rr::rdata::key;
+use hickory_client::rr::rdata::DNSSECRData;
+use hickory_proto::error::ProtoError;
+use hickory_proto::rr::dnssec;
+use hickory_proto::rr::rdata::opt::EdnsCode;
+use hickory_proto::rr::rdata::opt::EdnsOption;
+use hickory_proto::rr::rdata::sshfp;
+use hickory_proto::rr::rdata::svcb::EchConfig;
+use hickory_proto::rr::rdata::svcb::IpHint;
+use hickory_proto::rr::rdata::svcb::SvcParamValue;
+use hickory_proto::rr::rdata::svcb::Unknown;
+use hickory_proto::rr::rdata::tlsa;
+use hickory_proto::rr::RecordType;
+use hickory_proto::serialize::binary::BinEncodable;
+use hickory_resolver::Name;
 use nu_plugin::EvaluatedCall;
 use nu_plugin::LabeledError;
 use nu_protocol::record;
 use nu_protocol::FromValue;
 use nu_protocol::Span;
 use nu_protocol::Value;
-use trust_dns_client::rr::rdata::key;
-use trust_dns_client::rr::rdata::DNSSECRData;
-use trust_dns_proto::error::ProtoError;
-use trust_dns_proto::rr::dnssec;
-use trust_dns_proto::rr::rdata::opt::EdnsCode;
-use trust_dns_proto::rr::rdata::opt::EdnsOption;
-use trust_dns_proto::rr::rdata::sshfp;
-use trust_dns_proto::rr::rdata::svcb::EchConfig;
-use trust_dns_proto::rr::rdata::svcb::IpHint;
-use trust_dns_proto::rr::rdata::svcb::SvcParamValue;
-use trust_dns_proto::rr::rdata::svcb::Unknown;
-use trust_dns_proto::rr::rdata::tlsa;
-use trust_dns_proto::rr::RecordType;
-use trust_dns_proto::serialize::binary::BinEncodable;
-use trust_dns_resolver::Name;
 
 use super::constants;
 
@@ -80,17 +80,17 @@ where
 }
 
 pub struct Message {
-    msg: trust_dns_proto::op::Message,
+    msg: hickory_proto::op::Message,
     bytes: Vec<u8>,
 }
 
 impl Message {
-    pub fn new(msg: trust_dns_proto::op::Message) -> Self {
+    pub fn new(msg: hickory_proto::op::Message) -> Self {
         let bytes = msg.to_bytes().expect("unencodable message");
         Self { msg, bytes }
     }
 
-    pub fn into_inner(self) -> trust_dns_proto::op::Message {
+    pub fn into_inner(self) -> hickory_proto::op::Message {
         self.msg
     }
 
@@ -110,7 +110,7 @@ impl Message {
         );
 
         let parse_records =
-            |records: Vec<trust_dns_client::rr::Record>| -> Result<Value, LabeledError> {
+            |records: Vec<hickory_client::rr::Record>| -> Result<Value, LabeledError> {
                 Ok(Value::list(
                     records
                         .into_iter()
@@ -138,7 +138,7 @@ impl Message {
     }
 }
 
-pub struct Header<'r>(pub(crate) &'r trust_dns_proto::op::Header);
+pub struct Header<'r>(pub(crate) &'r hickory_proto::op::Header);
 
 impl<'r> Header<'r> {
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
@@ -202,7 +202,7 @@ impl<'r> Header<'r> {
     }
 }
 
-pub struct Query(pub(crate) trust_dns_proto::op::query::Query);
+pub struct Query(pub(crate) hickory_proto::op::query::Query);
 
 impl Query {
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
@@ -236,10 +236,10 @@ impl Query {
             None => vec![RecordType::AAAA, RecordType::A],
         };
 
-        let dns_class: trust_dns_proto::rr::DNSClass =
+        let dns_class: hickory_proto::rr::DNSClass =
             match call.get_flag_value(constants::flags::CLASS) {
                 Some(val) => DNSClass::try_from(val)?.0,
-                None => trust_dns_proto::rr::DNSClass::IN,
+                None => hickory_proto::rr::DNSClass::IN,
             };
 
         match value {
@@ -279,10 +279,10 @@ impl Query {
                 let class = rec
                     .get_data_by_key(constants::columns::CLASS)
                     .map(DNSClass::try_from)
-                    .unwrap_or(Ok(DNSClass(trust_dns_proto::rr::DNSClass::IN)))?
+                    .unwrap_or(Ok(DNSClass(hickory_proto::rr::DNSClass::IN)))?
                     .0;
 
-                let mut query = trust_dns_proto::op::Query::query(name, qtype.0);
+                let mut query = hickory_proto::op::Query::query(name, qtype.0);
                 query.set_query_class(class);
 
                 Ok(vec![Query(query)])
@@ -302,7 +302,7 @@ impl Query {
                 let queries = qtypes
                     .into_iter()
                     .map(|qtype| {
-                        let mut query = trust_dns_proto::op::Query::query(name.clone(), qtype);
+                        let mut query = hickory_proto::op::Query::query(name.clone(), qtype);
                         query.set_query_class(dns_class);
                         Query(query)
                     })
@@ -334,7 +334,7 @@ impl Query {
                 let queries = qtypes
                     .into_iter()
                     .map(|qtype| {
-                        let mut query = trust_dns_proto::op::Query::query(name.clone(), qtype);
+                        let mut query = hickory_proto::op::Query::query(name.clone(), qtype);
                         query.set_query_class(dns_class);
                         Query(query)
                     })
@@ -351,7 +351,7 @@ impl Query {
     }
 }
 
-pub struct Record(pub(crate) trust_dns_proto::rr::resource::Record);
+pub struct Record(pub(crate) hickory_proto::rr::resource::Record);
 
 impl Record {
     pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
@@ -377,16 +377,16 @@ impl Record {
     }
 }
 
-pub struct RData(pub(crate) trust_dns_proto::rr::RData);
+pub struct RData(pub(crate) hickory_proto::rr::RData);
 
 impl RData {
     pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
         let val = match self.0 {
-            trust_dns_proto::rr::RData::CAA(caa) => {
+            hickory_proto::rr::RData::CAA(caa) => {
                 let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
                 let tag = Value::string(caa.tag().as_str(), Span::unknown());
                 let value = match caa.value() {
-                    trust_dns_proto::rr::rdata::caa::Value::Issuer(issuer_name, key_values) => {
+                    hickory_proto::rr::rdata::caa::Value::Issuer(issuer_name, key_values) => {
                         let issuer_name = issuer_name
                             .as_ref()
                             .map(|name| Value::string(name.to_string(), Span::unknown()))
@@ -416,10 +416,10 @@ impl RData {
                             Span::unknown(),
                         )
                     }
-                    trust_dns_proto::rr::rdata::caa::Value::Url(url) => {
+                    hickory_proto::rr::rdata::caa::Value::Url(url) => {
                         Value::string(url.to_string(), Span::unknown())
                     }
-                    trust_dns_proto::rr::rdata::caa::Value::Unknown(data) => {
+                    hickory_proto::rr::rdata::caa::Value::Unknown(data) => {
                         Value::binary(data.clone(), Span::unknown())
                     }
                 };
@@ -436,8 +436,8 @@ impl RData {
             // CSYNC seems to be missing some accessors in the trust-dns lib,
             // which oddly enough actually are serialized in the `Display` impl,
             // so just use that
-            // trust_dns_proto::rr::RData::CSYNC(_) => todo!(),
-            trust_dns_proto::rr::RData::HINFO(hinfo) => {
+            // hickory_proto::rr::RData::CSYNC(_) => todo!(),
+            hickory_proto::rr::RData::HINFO(hinfo) => {
                 let cpu = util::string_or_binary(hinfo.cpu());
                 let os = util::string_or_binary(hinfo.os());
 
@@ -450,8 +450,8 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::HTTPS(trust_dns_proto::rr::rdata::HTTPS(svcb))
-            | trust_dns_proto::rr::RData::SVCB(svcb) => {
+            hickory_proto::rr::RData::HTTPS(hickory_proto::rr::rdata::HTTPS(svcb))
+            | hickory_proto::rr::RData::SVCB(svcb) => {
                 let svc_priority = Value::int(svcb.svc_priority() as i64, Span::unknown());
                 let target_name = Value::string(svcb.target_name().to_string(), Span::unknown());
                 let svc_params = svcb.svc_params().iter().map(|(key, value)| {
@@ -513,7 +513,7 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::MX(mx) => {
+            hickory_proto::rr::RData::MX(mx) => {
                 let preference = Value::int(mx.preference() as i64, Span::unknown());
                 let exchange = Value::string(mx.exchange().to_string(), Span::unknown());
 
@@ -526,7 +526,7 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::NAPTR(naptr) => {
+            hickory_proto::rr::RData::NAPTR(naptr) => {
                 let order = Value::int(naptr.order() as i64, Span::unknown());
                 let preference = Value::int(naptr.preference() as i64, Span::unknown());
                 let flags = util::string_or_binary(naptr.flags());
@@ -547,17 +547,15 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::NULL(null) => util::string_or_binary(null.anything()),
-            trust_dns_proto::rr::RData::NS(ns) => Value::string(ns.to_string(), Span::unknown()),
-            trust_dns_proto::rr::RData::OPENPGPKEY(key) => {
+            hickory_proto::rr::RData::NULL(null) => util::string_or_binary(null.anything()),
+            hickory_proto::rr::RData::NS(ns) => Value::string(ns.to_string(), Span::unknown()),
+            hickory_proto::rr::RData::OPENPGPKEY(key) => {
                 Value::binary(key.public_key(), Span::unknown())
             }
-            trust_dns_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(call),
-            trust_dns_proto::rr::RData::PTR(name) => {
-                Value::string(name.to_string(), Span::unknown())
-            }
+            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(call),
+            hickory_proto::rr::RData::PTR(name) => Value::string(name.to_string(), Span::unknown()),
 
-            trust_dns_proto::rr::RData::SOA(soa) => {
+            hickory_proto::rr::RData::SOA(soa) => {
                 let mname = Value::string(soa.mname().to_string(), Span::unknown());
                 let rname = Value::string(soa.rname().to_string(), Span::unknown());
                 let serial = Value::int(soa.serial() as i64, Span::unknown());
@@ -580,7 +578,7 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::SRV(srv) => {
+            hickory_proto::rr::RData::SRV(srv) => {
                 let priority = Value::int(srv.priority() as i64, Span::unknown());
                 let weight = Value::int(srv.weight() as i64, Span::unknown());
                 let port = Value::int(srv.port() as i64, Span::unknown());
@@ -597,7 +595,7 @@ impl RData {
                 )
             }
 
-            trust_dns_proto::rr::RData::SSHFP(sshfp) => {
+            hickory_proto::rr::RData::SSHFP(sshfp) => {
                 let algorithm = match sshfp.algorithm() {
                     sshfp::Algorithm::Reserved => Value::string("reserved", Span::unknown()),
                     sshfp::Algorithm::RSA => Value::string("RSA", Span::unknown()),
@@ -628,7 +626,7 @@ impl RData {
                     Span::unknown(),
                 )
             }
-            trust_dns_proto::rr::RData::TLSA(tlsa) => {
+            hickory_proto::rr::RData::TLSA(tlsa) => {
                 let cert_usage = match tlsa.cert_usage() {
                     tlsa::CertUsage::CA => Value::string("CA", Span::unknown()),
                     tlsa::CertUsage::Service => Value::string("service", Span::unknown()),
@@ -667,13 +665,13 @@ impl RData {
                     Span::unknown(),
                 )
             }
-            trust_dns_proto::rr::RData::TXT(data) => Value::list(
+            hickory_proto::rr::RData::TXT(data) => Value::list(
                 data.iter()
                     .map(|txt_data| util::string_or_binary(Vec::from(txt_data.clone())))
                     .collect(),
                 Span::unknown(),
             ),
-            trust_dns_proto::rr::RData::DNSSEC(dnssec) => match dnssec {
+            hickory_proto::rr::RData::DNSSEC(dnssec) => match dnssec {
                 DNSSECRData::DNSKEY(dnskey) => parse_dnskey(&dnskey),
                 DNSSECRData::CDNSKEY(cdnskey) => parse_dnskey(cdnskey),
                 DNSSECRData::DS(ds) => parse_ds(&ds),
@@ -891,9 +889,9 @@ impl RData {
                 ),
                 rdata => Value::string(rdata.to_string(), Span::unknown()),
             },
-            trust_dns_proto::rr::RData::Unknown { code, rdata } => Value::record(
+            hickory_proto::rr::RData::Unknown { code: rtype, rdata } => Value::record(
                 record![
-                    "code"  => Value::int(code as i64, Span::unknown()),
+                    "code"  => Value::int(u16::from(rtype) as i64, Span::unknown()),
                     "rdata" => Value::binary(rdata.anything(), Span::unknown()),
                 ],
                 Span::unknown(),
@@ -950,7 +948,7 @@ fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
     )
 }
 
-pub struct Edns(pub(crate) trust_dns_proto::op::Edns);
+pub struct Edns(pub(crate) hickory_proto::op::Edns);
 
 impl Edns {
     pub fn into_value(self, call: &EvaluatedCall) -> Value {
@@ -974,7 +972,7 @@ impl Edns {
     }
 }
 
-pub struct Opt<'o>(pub(crate) &'o trust_dns_proto::rr::rdata::OPT);
+pub struct Opt<'o>(pub(crate) &'o hickory_proto::rr::rdata::OPT);
 
 impl<'o> Opt<'o> {
     pub fn into_value(self, _call: &EvaluatedCall) -> Value {
@@ -1029,7 +1027,7 @@ impl<'o> Opt<'o> {
     }
 }
 
-pub struct RType(pub(crate) trust_dns_proto::rr::RecordType);
+pub struct RType(pub(crate) hickory_proto::rr::RecordType);
 
 impl TryFrom<Value> for RType {
     type Error = LabeledError;
@@ -1068,7 +1066,7 @@ impl TryFrom<Value> for RType {
     }
 }
 
-pub struct DNSClass(pub(crate) trust_dns_proto::rr::DNSClass);
+pub struct DNSClass(pub(crate) hickory_proto::rr::DNSClass);
 
 impl TryFrom<Value> for DNSClass {
     type Error = LabeledError;
@@ -1082,13 +1080,10 @@ impl TryFrom<Value> for DNSClass {
 
         let dns_class: DNSClass = match value {
             Value::String { .. } => DNSClass(
-                trust_dns_proto::rr::DNSClass::from_str(&value.as_string().unwrap().to_uppercase())
+                hickory_proto::rr::DNSClass::from_str(&value.as_string().unwrap().to_uppercase())
                     .map_err(|err| class_err(err, value.span()))?,
             ),
-            Value::Int { val, .. } => DNSClass(
-                trust_dns_proto::rr::DNSClass::from_u16(val as u16)
-                    .map_err(|err| class_err(err, value.span()))?,
-            ),
+            Value::Int { val, .. } => DNSClass(hickory_proto::rr::DNSClass::from(val as u16)),
             value => {
                 return Err(LabeledError {
                     label: "InvalidClassType".into(),
@@ -1103,7 +1098,7 @@ impl TryFrom<Value> for DNSClass {
     }
 }
 
-pub struct Protocol(pub(crate) trust_dns_resolver::config::Protocol);
+pub struct Protocol(pub(crate) hickory_resolver::config::Protocol);
 
 impl TryFrom<Value> for Protocol {
     type Error = LabeledError;
@@ -1111,11 +1106,11 @@ impl TryFrom<Value> for Protocol {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         let result = match value {
             Value::String { .. } => match value.as_string().unwrap().to_uppercase().as_str() {
-                "UDP" => Protocol(trust_dns_resolver::config::Protocol::Udp),
-                "TCP" => Protocol(trust_dns_resolver::config::Protocol::Tcp),
-                "TLS" => Protocol(trust_dns_resolver::config::Protocol::Tls),
-                "HTTPS" => Protocol(trust_dns_resolver::config::Protocol::Https),
-                "QUIC" => Protocol(trust_dns_resolver::config::Protocol::Quic),
+                "UDP" => Protocol(hickory_resolver::config::Protocol::Udp),
+                "TCP" => Protocol(hickory_resolver::config::Protocol::Tcp),
+                "TLS" => Protocol(hickory_resolver::config::Protocol::Tls),
+                "HTTPS" => Protocol(hickory_resolver::config::Protocol::Https),
+                "QUIC" => Protocol(hickory_resolver::config::Protocol::Quic),
                 proto => {
                     return Err(LabeledError {
                         label: "InvalidProtocol".into(),

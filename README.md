@@ -3,7 +3,7 @@
 [Nushell](http://www.nushell.sh/) plugin that does DNS queries  and parses
 results into meaningful types. Intended to be a native replacement for
 [`dig`](https://en.m.wikipedia.org/wiki/Dig_(command)). Uses the excellent
-[`trust-dns`](https://github.com/bluejekyll/trust-dns) crates.
+[`hickory`](https://github.com/hickory-dns/hickory-dns) crates.
 
 ## Usage
 

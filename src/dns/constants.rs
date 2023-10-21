@@ -14,7 +14,7 @@ pub mod flags {
 }
 
 pub mod config {
-    use trust_dns_resolver::config::Protocol;
+    use hickory_resolver::config::Protocol;
 
     pub fn default_port(protocol: Protocol) -> u16 {
         match protocol {

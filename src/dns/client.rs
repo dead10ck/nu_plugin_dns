@@ -1,14 +1,10 @@
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use futures_util::{future, Stream, StreamExt};
-use nu_plugin::{EvaluatedCall, LabeledError};
-use nu_protocol::Span;
-use rustls::{OwnedTrustAnchor, RootCertStore};
-use tokio::{net::UdpSocket, task::JoinSet};
-use trust_dns_client::client::{AsyncClient, AsyncDnssecClient};
-use trust_dns_proto::{
+use hickory_client::client::{AsyncClient, AsyncDnssecClient};
+use hickory_proto::{
     error::{ProtoError, ProtoErrorKind},
-    https::HttpsClientStreamBuilder,
+    h2::HttpsClientStreamBuilder,
     iocompat::AsyncIoTokioAsStd,
     op::NoopMessageFinalizer,
     quic::QuicClientStream,
@@ -17,7 +13,11 @@ use trust_dns_proto::{
     xfer::DnsResponse,
     DnsHandle, DnsMultiplexer,
 };
-use trust_dns_resolver::config::Protocol;
+use hickory_resolver::config::Protocol;
+use nu_plugin::{EvaluatedCall, LabeledError};
+use nu_protocol::Span;
+use rustls::{OwnedTrustAnchor, RootCertStore};
+use tokio::{net::UdpSocket, task::JoinSet};
 
 use crate::dns::{constants, serde};
 
@@ -123,7 +123,7 @@ impl DnsClient {
                     Protocol::Tls => {
                         let client_config = Arc::new(client_config);
                         make_clients!({
-                            let (stream, sender) = trust_dns_proto::rustls::tls_client_connect::<
+                            let (stream, sender) = hickory_proto::rustls::tls_client_connect::<
                                 TokioTcpConnect,
                             >(
                                 addr, dns_name.clone(), client_config.clone()
@@ -169,13 +169,13 @@ impl DnsHandle for DnsClient {
     type Response = DnsHandleResponse;
     type Error = ProtoError;
 
-    fn send<R>(&mut self, request: R) -> Self::Response
+    fn send<R>(&self, request: R) -> Self::Response
     where
-        R: Into<trust_dns_proto::xfer::DnsRequest> + Unpin + Send + 'static,
+        R: Into<hickory_proto::xfer::DnsRequest> + Unpin + Send + 'static,
     {
         let request = request.into();
 
-        match (&mut self.async_client, &mut self.dnssec_client) {
+        match (&self.async_client, &self.dnssec_client) {
             (None, None) => unreachable!(),
             (Some(async_client), None) => Box::pin(async_client.send(request)),
             (None, Some(dnssec_client)) => Box::pin(dnssec_client.send(request)),

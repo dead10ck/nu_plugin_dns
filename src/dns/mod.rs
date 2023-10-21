@@ -6,9 +6,9 @@ use std::{
 use nu_plugin::{EvaluatedCall, LabeledError};
 use nu_protocol::{record, Span, Value};
 
+use hickory_client::client::ClientHandle;
+use hickory_resolver::config::{Protocol, ResolverConfig};
 use tracing_subscriber::prelude::*;
-use trust_dns_client::client::ClientHandle;
-use trust_dns_resolver::config::{Protocol, ResolverConfig};
 
 use self::{client::DnsClient, constants::flags, serde::Query};
 
@@ -99,7 +99,7 @@ impl Dns {
             }
             None => {
                 let (config, _) =
-                    trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
+                    hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
                 tracing::debug!(?config);
                 match config.name_servers() {
                     [ns, ..] => (ns.socket_addr, None, ns.protocol),
@@ -138,7 +138,7 @@ impl Dns {
             span: None,
         })?
         .into_iter()
-        .map(|resp: trust_dns_proto::xfer::DnsResponse| {
+        .map(|resp: hickory_proto::xfer::DnsResponse| {
             let msg = serde::Message::new(resp.into_message());
             msg.into_value(call)
         })
