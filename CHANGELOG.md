@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2023-10-21
+
+* `trust-dns` has been rebranded as `hickory`. Change all the crates and upgrade
+  to 0.24
+
+## [1.0.2] - 2023-10-20
+
+* Upgrade dependencies
+
 ## [1.0.1] - 2023-10-19
 
 * Upgrade to nu 0.86.0
