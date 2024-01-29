@@ -256,7 +256,7 @@ impl Query {
 
                 let name = Name::from_utf8(
                     String::from_value(
-                        &rec.get_data_by_key(constants::columns::NAME)
+                        rec.get_data_by_key(constants::columns::NAME)
                             .ok_or_else(|| must_have_col_err(constants::columns::NAME))?,
                     )
                     .map_err(|err| LabeledError {
