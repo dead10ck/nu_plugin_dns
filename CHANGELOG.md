@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2024-02-08
+
+* Upgrade dependencies. Fixes breakage in nu 0.90.1
+
 ## [1.0.4] - 2024-01-29
 
 * Upgrade dependencies
