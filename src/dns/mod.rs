@@ -24,6 +24,7 @@ impl Dns {
     async fn run_impl(
         &mut self,
         name: &str,
+        _config: &Option<Value>,
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {

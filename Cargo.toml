@@ -26,10 +26,10 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.30"
-nu-plugin = "0.89.0"
-nu-protocol = "0.89.0"
+nu-plugin = "0.90.1"
+nu-protocol = "0.90.1"
 
-tokio = "1.35.1"
+tokio = "1.36.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 

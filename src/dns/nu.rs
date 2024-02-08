@@ -94,10 +94,11 @@ impl Plugin for Dns {
     fn run(
         &mut self,
         name: &str,
+        config: &Option<Value>,
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(self.run_impl(name, call, input))
+        runtime.block_on(self.run_impl(name, config, call, input))
     }
 }

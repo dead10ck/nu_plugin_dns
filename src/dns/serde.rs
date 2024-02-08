@@ -33,7 +33,7 @@ where
 {
     let code_string = Value::string(code.to_string(), Span::unknown());
 
-    if call.has_flag(constants::flags::CODE) {
+    if matches!(call.has_flag(constants::flags::CODE), Ok(true)) {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
@@ -59,7 +59,7 @@ where
 {
     let code_string = Value::string(code.to_string(), Span::unknown());
 
-    if call.has_flag(constants::flags::CODE) {
+    if matches!(call.has_flag(constants::flags::CODE), Ok(true)) {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
@@ -147,7 +147,7 @@ impl<'r> Header<'r> {
         let id = Value::int(header.id().into(), Span::unknown());
 
         let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
-        let message_type = if call.has_flag(constants::flags::CODE) {
+        let message_type = if matches!(call.has_flag(constants::flags::CODE), Ok(true)) {
             Value::record(
                 nu_protocol::Record::from_iter(std::iter::zip(
                     Vec::from_iter(
