@@ -117,7 +117,7 @@ impl DnsClient {
                         msg: "HTTPS requires a DNS name".into(),
                         span: None,
                     })?
-                    .as_string()?;
+                    .into_string()?;
 
                 match proto {
                     Protocol::Tls => {

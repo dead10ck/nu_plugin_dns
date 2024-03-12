@@ -84,9 +84,9 @@ impl Dns {
         let (addr, addr_span, protocol) = match call.get_flag_value(flags::SERVER) {
             Some(ref value @ Value::String { .. }) => {
                 let protocol = protocol.unwrap_or(Protocol::Udp);
-                let addr = SocketAddr::from_str(&value.as_string().unwrap())
+                let addr = SocketAddr::from_str(value.as_str().unwrap())
                     .or_else(|_| {
-                        IpAddr::from_str(&value.as_string().unwrap()).map(|ip| {
+                        IpAddr::from_str(value.as_str().unwrap()).map(|ip| {
                             SocketAddr::new(ip, constants::config::default_port(protocol))
                         })
                     })

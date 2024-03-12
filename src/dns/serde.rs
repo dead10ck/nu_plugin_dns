@@ -1041,7 +1041,7 @@ impl TryFrom<Value> for RType {
 
         match value {
             Value::String { .. } => Ok(RType(
-                RecordType::from_str(&value.as_string().unwrap().to_uppercase())
+                RecordType::from_str(&value.as_str().unwrap().to_uppercase())
                     .map_err(|err| qtype_err(err, value.span()))?,
             )),
             Value::Int { val, .. } => {
@@ -1080,7 +1080,7 @@ impl TryFrom<Value> for DNSClass {
 
         let dns_class: DNSClass = match value {
             Value::String { .. } => DNSClass(
-                hickory_proto::rr::DNSClass::from_str(&value.as_string().unwrap().to_uppercase())
+                hickory_proto::rr::DNSClass::from_str(&value.as_str().unwrap().to_uppercase())
                     .map_err(|err| class_err(err, value.span()))?,
             ),
             Value::Int { val, .. } => DNSClass(hickory_proto::rr::DNSClass::from(val as u16)),
@@ -1105,7 +1105,7 @@ impl TryFrom<Value> for Protocol {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         let result = match value {
-            Value::String { .. } => match value.as_string().unwrap().to_uppercase().as_str() {
+            Value::String { .. } => match value.as_str().unwrap().to_uppercase().as_str() {
                 "UDP" => Protocol(hickory_resolver::config::Protocol::Udp),
                 "TCP" => Protocol(hickory_resolver::config::Protocol::Tcp),
                 "TLS" => Protocol(hickory_resolver::config::Protocol::Tls),
@@ -1146,7 +1146,7 @@ impl TryFrom<Value> for DnssecMode {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
-            Value::String { .. } => Ok(match value.as_string().unwrap().to_uppercase().as_str() {
+            Value::String { .. } => Ok(match value.as_str().unwrap().to_uppercase().as_str() {
                 "NONE" => DnssecMode::None,
                 "STRICT" => DnssecMode::Strict,
                 "OPPORTUNISTIC" => DnssecMode::Opportunistic,
