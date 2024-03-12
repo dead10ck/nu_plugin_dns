@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2024-03-12
+
+* Fix typo: `recusion_desired` was fixed to `recursion_desired`. This is
+  technically a **breaking change** if you use this in any scripts.
+* Upgrade nu to 0.91.0
+
 ## [1.0.5] - 2024-02-08
 
 * Upgrade dependencies. Fixes breakage in nu 0.90.1
