@@ -1,13 +1,16 @@
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
+    sync::Arc,
 };
 
-use nu_plugin::{EvaluatedCall, LabeledError};
-use nu_protocol::{record, Span, Value};
-
 use hickory_client::client::ClientHandle;
+use nu_plugin::{EngineInterface, EvaluatedCall};
+use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
+
 use hickory_resolver::config::{Protocol, ResolverConfig};
+
+use tokio::sync::Mutex;
 use tracing_subscriber::prelude::*;
 
 use self::{client::DnsClient, constants::flags, serde::Query};
@@ -18,61 +21,39 @@ mod nu;
 mod serde;
 
 #[derive(Debug)]
-pub struct Dns {}
+pub struct Dns;
 
-impl Dns {
+#[derive(Debug)]
+pub struct DnsQuery;
+
+impl DnsQuery {
     async fn run_impl(
-        &mut self,
-        name: &str,
-        _config: &Option<Value>,
+        &self,
+        _plugin: &Dns,
+        _engine: &EngineInterface,
         call: &EvaluatedCall,
-        input: &Value,
-    ) -> Result<Value, LabeledError> {
-        tracing_subscriber::registry()
+        input: PipelineData,
+    ) -> Result<PipelineData, LabeledError> {
+        let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
+            .try_init();
 
-        match name {
-            constants::commands::QUERY => self.query(call, input).await,
-            _ => Err(LabeledError {
-                label: "NoSuchCommandError".into(),
-                msg: "No such command".into(),
-                span: Some(call.head),
-            }),
-        }
-    }
+        let arg_inputs: Value = call.nth(0).unwrap_or(Value::nothing(call.head));
 
-    fn get_queries(vals: &[&Value], call: &EvaluatedCall) -> Result<Vec<Query>, LabeledError> {
-        vals.iter()
-            .map(|input_val| match input_val {
-                Value::List { vals, .. } => {
-                    if vals.iter().all(|val| matches!(val, Value::Binary { .. })) {
-                        return Query::try_from_value(input_val, call);
-                    }
-
-                    Dns::get_queries(&vals.iter().collect::<Vec<_>>(), call)
-                }
-                _ => Query::try_from_value(input_val, call),
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(|res| res.into_iter().flatten().collect())
-    }
-
-    async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
-        let arg_inputs: Vec<Value> = call.rest(0)?;
-        let input: Vec<&Value> = match input {
-            Value::Nothing { .. } => arg_inputs.iter().collect(),
+        let input: PipelineData = match input {
+            PipelineData::Empty | PipelineData::Value(Value::Nothing { .. }, _) => {
+                PipelineData::Value(arg_inputs, None)
+            }
             val => {
                 if !arg_inputs.is_empty() {
-                    return Err(LabeledError {
-                        label: "AmbiguousInputError".into(),
-                        msg: "Input should either be positional args or piped, but not both".into(),
-                        span: Some(val.span()),
-                    });
+                    return Err(LabeledError::new("ambiguous input").with_label(
+                        "Input should either be positional args or piped, but not both",
+                        val.span().unwrap_or(Span::unknown()),
+                    ));
                 }
 
-                vec![val]
+                val
             }
         };
 
@@ -90,10 +71,9 @@ impl Dns {
                             SocketAddr::new(ip, constants::config::default_port(protocol))
                         })
                     })
-                    .map_err(|err| LabeledError {
-                        label: "InvalidServerAddress".into(),
-                        msg: format!("Invalid server: {}", err),
-                        span: Some(value.clone().span()),
+                    .map_err(|err| {
+                        LabeledError::new("invalid server")
+                            .with_label(err.to_string(), value.clone().span())
                     })?;
 
                 (addr, Some(value.span()), protocol)
@@ -115,53 +95,73 @@ impl Dns {
                 }
             }
             Some(val) => {
-                return Err(LabeledError {
-                    label: "InvalidServerAddressInputError".into(),
-                    msg: "invalid input type for server address".into(),
-                    span: Some(val.span()),
-                })
+                return Err(LabeledError::new("invalid server address")
+                    .with_label("server address should be a string", val.span()));
             }
         };
 
-        let queries: Vec<Query> = Dns::get_queries(&input, call)?;
-        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
+        let (client, _bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
+        let client = Arc::new(Mutex::new(client));
 
-        let messages: Vec<_> = futures_util::future::join_all(queries.into_iter().map(|query| {
+        // .await
+        // .unwrap_or_else(|err| Value::string(err.to_string(), Span::unknown()))
+        match input {
+            PipelineData::Value(val, _) => {
+                let values = self.query(call, val, client.clone()).await?;
+                Ok(PipelineData::Value(
+                    Value::list(values, Span::unknown()),
+                    None,
+                ))
+            }
+            PipelineData::ListStream(stream, _) => Ok(PipelineData::ListStream(
+                ListStream::from_stream(
+                    // ew. how can we fix this?
+                    futures_util::future::try_join_all(
+                        stream
+                            .stream
+                            .map(|val| self.query(call, val, client.clone())),
+                    )
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .flatten(),
+                    stream.ctrlc,
+                ),
+                None,
+            )),
+            data => Err(LabeledError::new("invalid input").with_label(
+                "Only values can be passed as input",
+                data.span().unwrap_or(Span::unknown()),
+            )),
+        }
+    }
+
+    async fn query(
+        &self,
+        call: &EvaluatedCall,
+        input: Value,
+        client: Arc<Mutex<DnsClient>>,
+    ) -> Result<Vec<Value>, LabeledError> {
+        let queries: Vec<Query> = Query::try_from_value(&input, call)?;
+
+        let mut client = client.lock_owned().await;
+
+        futures_util::future::join_all(queries.into_iter().map(|query| {
             let parts = query.0.into_parts();
             client.query(parts.name, parts.query_class, parts.query_type)
         }))
         .await
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| LabeledError {
-            label: "DNSResponseError".into(),
-            msg: format!("Error in DNS response: {:?}", err),
-            span: None,
+        .map_err(|err| {
+            LabeledError::new("DNS error")
+                .with_label(format!("Error in DNS response: {:?}", err), input.span())
         })?
         .into_iter()
         .map(|resp: hickory_proto::xfer::DnsResponse| {
             let msg = serde::Message::new(resp.into_message());
             msg.into_value(call)
         })
-        .collect::<Result<_, _>>()?;
-
-        let result = Value::record(
-            nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::TOP_COLS.iter().map(|s| (*s).into())),
-                vec![
-                    Value::record(
-                        record![
-                            constants::columns::ADDRESS => Value::string(addr.to_string(), Span::unknown()),
-                            constants::columns::PROTOCOL => Value::string(protocol.to_string(), Span::unknown()),
-                        ],
-                        Span::unknown(),
-                    ),
-                    Value::list(messages, Span::unknown()),
-                ],
-            )),
-            Span::unknown(),
-        );
-
-        Ok(result)
+        .collect::<Result<_, _>>()
     }
 }

@@ -14,8 +14,8 @@ use hickory_proto::{
     DnsHandle, DnsMultiplexer,
 };
 use hickory_resolver::config::Protocol;
-use nu_plugin::{EvaluatedCall, LabeledError};
-use nu_protocol::Span;
+use nu_plugin::EvaluatedCall;
+use nu_protocol::{LabeledError, Span};
 use rustls::{OwnedTrustAnchor, RootCertStore};
 use tokio::{net::UdpSocket, task::JoinSet};
 
@@ -48,10 +48,11 @@ impl DnsClient {
         protocol: Protocol,
         call: &EvaluatedCall,
     ) -> Result<(Self, JoinSet<Result<(), ProtoError>>), LabeledError> {
-        let connect_err = |err| LabeledError {
-            label: "ConnectError".into(),
-            msg: format!("Error creating client connection: {}", err),
-            span: addr_span,
+        let connect_err = |err| {
+            LabeledError::new("connection error").with_label(
+                format!("Error creating client connection: {}", err),
+                addr_span.unwrap_or(Span::unknown()),
+            )
         };
 
         let dnssec_mode = match call.get_flag_value(constants::flags::DNSSEC) {
@@ -112,10 +113,9 @@ impl DnsClient {
 
                 let dns_name = call
                     .get_flag_value(constants::flags::DNS_NAME)
-                    .ok_or_else(|| LabeledError {
-                        label: "MissingRequiredArgError".into(),
-                        msg: "HTTPS requires a DNS name".into(),
-                        span: None,
+                    .ok_or_else(|| {
+                        LabeledError::new("missing required argument")
+                            .with_label("HTTPS requires a DNS name", call.head)
                     })?
                     .into_string()?;
 
@@ -147,11 +147,8 @@ impl DnsClient {
                 }
             }
             proto => {
-                return Err(LabeledError {
-                    label: "UnknownProtocolError".into(),
-                    msg: format!("Unknown protocol: {}", proto),
-                    span: Some(call.head),
-                })
+                return Err(LabeledError::new("unknown protocol")
+                    .with_label(format!("Unknown protocol: {}", proto), call.head))
             }
         };
 
