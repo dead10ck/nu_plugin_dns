@@ -4,13 +4,14 @@ use std::{
     sync::Arc,
 };
 
+use futures_util::{future, StreamExt};
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
 
 use hickory_resolver::config::{Protocol, ResolverConfig};
 
-use tokio::sync::Mutex;
+use tokio::{stream, sync::Mutex};
 use tracing_subscriber::prelude::*;
 
 use self::{client::DnsClient, constants::flags, serde::Query};
@@ -113,22 +114,47 @@ impl DnsQuery {
                     None,
                 ))
             }
-            PipelineData::ListStream(stream, _) => Ok(PipelineData::ListStream(
-                ListStream::from_stream(
-                    // ew. how can we fix this?
-                    futures_util::future::try_join_all(
-                        stream
-                            .stream
-                            .map(|val| self.query(call, val, client.clone())),
-                    )
-                    .await
-                    .into_iter()
-                    .flatten()
-                    .flatten(),
-                    stream.ctrlc,
-                ),
-                None,
-            )),
+            PipelineData::ListStream(stream, _) => {
+                // let query_stream = futures_util::stream::iter(stream.stream);
+                // .map(|val| self.query(call, val, client.clone()));
+
+                let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(16);
+                let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(16);
+
+                let query_handle = tokio::spawn(async move {
+                    while let Some(val) = request_rx.recv().await {
+                        let client = client.clone();
+                        let resp_tx = resp_tx.clone();
+                        tokio::spawn(async move {
+                            let client = client.clone();
+                            let resp_tx = resp_tx.clone();
+                            let resp = self.query(call, val, client).await;
+                            resp_tx.send(resp).await
+                        });
+                    }
+                });
+
+                let pipeline_handle = tokio::spawn(async move {
+                    stream
+                        .stream
+                        .try_for_each(|val| request_tx.blocking_send(val))
+                });
+
+                Ok(PipelineData::ListStream(
+                    ListStream::from_stream(
+                        std::iter::from_fn(|| {
+                            resp_rx.blocking_recv().map(|result| {
+                                result.unwrap_or_else(|err| {
+                                    vec![Value::error(err.into(), Span::unknown())]
+                                })
+                            })
+                        })
+                        .flatten(),
+                        stream.ctrlc,
+                    ),
+                    None,
+                ))
+            }
             data => Err(LabeledError::new("invalid input").with_label(
                 "Only values can be passed as input",
                 data.span().unwrap_or(Span::unknown()),
