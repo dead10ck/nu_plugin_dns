@@ -4,14 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use futures_util::{future, StreamExt};
+use futures_util::{Future, StreamExt};
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
 
 use hickory_resolver::config::{Protocol, ResolverConfig};
 
-use tokio::{stream, sync::Mutex};
+use tokio::sync::{mpsc::error::SendError, Mutex};
 use tracing_subscriber::prelude::*;
 
 use self::{client::DnsClient, constants::flags, serde::Query};
@@ -102,39 +102,38 @@ impl DnsQuery {
         };
 
         let (client, _bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
-        let client = Arc::new(Mutex::new(client));
+        let call = Arc::new(call.clone());
 
-        // .await
-        // .unwrap_or_else(|err| Value::string(err.to_string(), Span::unknown()))
         match input {
             PipelineData::Value(val, _) => {
-                let values = self.query(call, val, client.clone()).await?;
+                let values = Self::query(call, val, client.clone()).await?;
                 Ok(PipelineData::Value(
                     Value::list(values, Span::unknown()),
                     None,
                 ))
             }
-            PipelineData::ListStream(stream, _) => {
-                // let query_stream = futures_util::stream::iter(stream.stream);
-                // .map(|val| self.query(call, val, client.clone()));
-
+            PipelineData::ListStream(mut stream, _) => {
                 let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(16);
                 let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(16);
 
-                let query_handle = tokio::spawn(async move {
-                    while let Some(val) = request_rx.recv().await {
-                        let client = client.clone();
-                        let resp_tx = resp_tx.clone();
-                        tokio::spawn(async move {
+                tokio::spawn({
+                    let call = call.clone();
+                    let client = client.clone();
+
+                    async move {
+                        while let Some(val) = Box::pin(request_rx.recv()).await {
+                            let call = call.clone();
                             let client = client.clone();
                             let resp_tx = resp_tx.clone();
-                            let resp = self.query(call, val, client).await;
-                            resp_tx.send(resp).await
-                        });
+                            let resp = Self::query(call, val, client).await;
+                            resp_tx.send(resp).await?;
+                        }
+
+                        Result::<_, SendError<_>>::Ok(())
                     }
                 });
 
-                let pipeline_handle = tokio::spawn(async move {
+                tokio::spawn(async move {
                     stream
                         .stream
                         .try_for_each(|val| request_tx.blocking_send(val))
@@ -142,7 +141,7 @@ impl DnsQuery {
 
                 Ok(PipelineData::ListStream(
                     ListStream::from_stream(
-                        std::iter::from_fn(|| {
+                        std::iter::from_fn(move || {
                             resp_rx.blocking_recv().map(|result| {
                                 result.unwrap_or_else(|err| {
                                     vec![Value::error(err.into(), Span::unknown())]
@@ -162,32 +161,45 @@ impl DnsQuery {
         }
     }
 
-    async fn query(
-        &self,
-        call: &EvaluatedCall,
+    fn query(
+        call: Arc<EvaluatedCall>,
         input: Value,
-        client: Arc<Mutex<DnsClient>>,
-    ) -> Result<Vec<Value>, LabeledError> {
-        let queries: Vec<Query> = Query::try_from_value(&input, call)?;
+        client: DnsClient,
+    ) -> impl Future<Output = Result<Vec<Value>, LabeledError>> + Send {
+        let client = Arc::new(Mutex::new(client));
 
-        let mut client = client.lock_owned().await;
+        async move {
+            let in_span = input.span();
+            let queries = Query::try_from_value(&input, &call)?;
 
-        futures_util::future::join_all(queries.into_iter().map(|query| {
-            let parts = query.0.into_parts();
-            client.query(parts.name, parts.query_class, parts.query_type)
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| {
-            LabeledError::new("DNS error")
-                .with_label(format!("Error in DNS response: {:?}", err), input.span())
-        })?
-        .into_iter()
-        .map(|resp: hickory_proto::xfer::DnsResponse| {
-            let msg = serde::Message::new(resp.into_message());
-            msg.into_value(call)
-        })
-        .collect::<Result<_, _>>()
+            futures_util::stream::iter(queries)
+                .then(|query| {
+                    let client = client.clone();
+                    let call = call.clone();
+
+                    async move {
+                        let parts = query.0.into_parts();
+                        let mut client_handle = client.lock().await;
+
+                        client_handle
+                            .query(parts.name, parts.query_class, parts.query_type)
+                            .await
+                            .map_err(|err| {
+                                LabeledError::new("DNS error").with_label(
+                                    format!("Error in DNS response: {:?}", err),
+                                    in_span,
+                                )
+                            })
+                            .and_then(|resp: hickory_proto::xfer::DnsResponse| {
+                                let msg = serde::Message::new(resp.into_message());
+                                msg.into_value(&call)
+                            })
+                    }
+                })
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+        }
     }
 }
