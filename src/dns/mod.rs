@@ -4,17 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use futures_util::{stream::FuturesUnordered, Future, StreamExt};
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
 
 use hickory_resolver::config::{Protocol, ResolverConfig};
 
-use tokio::{
-    sync::{mpsc::error::SendError, Mutex},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc::error::SendError, task::JoinHandle};
 use tracing_subscriber::prelude::*;
 
 use self::{client::DnsClient, constants::flags, serde::Query};
@@ -197,45 +194,38 @@ impl DnsQuery {
         Ok(())
     }
 
-    fn query(
+    async fn query(
         call: Arc<EvaluatedCall>,
         input: Value,
         client: DnsClient,
-    ) -> impl Future<Output = Result<Vec<Value>, LabeledError>> + Send {
-        let client = Arc::new(Mutex::new(client));
+    ) -> Result<Vec<Value>, LabeledError> {
+        let in_span = input.span();
+        let queries = Query::try_from_value(&input, &call)?;
 
-        async move {
-            let in_span = input.span();
-            let queries = Query::try_from_value(&input, &call)?;
+        futures_util::stream::iter(queries)
+            .then(|query| {
+                let mut client = client.clone();
+                let call = call.clone();
 
-            futures_util::stream::iter(queries)
-                .then(|query| {
-                    let client = client.clone();
-                    let call = call.clone();
+                async move {
+                    let parts = query.0.into_parts();
 
-                    async move {
-                        let parts = query.0.into_parts();
-                        let mut client_handle = client.lock().await;
-
-                        client_handle
-                            .query(parts.name, parts.query_class, parts.query_type)
-                            .await
-                            .map_err(|err| {
-                                LabeledError::new("DNS error").with_label(
-                                    format!("Error in DNS response: {:?}", err),
-                                    in_span,
-                                )
-                            })
-                            .and_then(|resp: hickory_proto::xfer::DnsResponse| {
-                                let msg = serde::Message::new(resp.into_message());
-                                msg.into_value(&call)
-                            })
-                    }
-                })
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-        }
+                    client
+                        .query(parts.name, parts.query_class, parts.query_type)
+                        .await
+                        .map_err(|err| {
+                            LabeledError::new("DNS error")
+                                .with_label(format!("Error in DNS response: {:?}", err), in_span)
+                        })
+                        .and_then(|resp: hickory_proto::xfer::DnsResponse| {
+                            let msg = serde::Message::new(resp.into_message());
+                            msg.into_value(&call)
+                        })
+                }
+            })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
     }
 }
