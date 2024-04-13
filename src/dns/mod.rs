@@ -4,14 +4,17 @@ use std::{
     sync::Arc,
 };
 
-use futures_util::{Future, StreamExt};
+use futures_util::{stream::FuturesUnordered, Future, StreamExt};
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
 
 use hickory_resolver::config::{Protocol, ResolverConfig};
 
-use tokio::sync::{mpsc::error::SendError, Mutex};
+use tokio::{
+    sync::{mpsc::error::SendError, Mutex},
+    task::JoinHandle,
+};
 use tracing_subscriber::prelude::*;
 
 use self::{client::DnsClient, constants::flags, serde::Query};
@@ -26,6 +29,9 @@ pub struct Dns;
 
 #[derive(Debug)]
 pub struct DnsQuery;
+
+type ChannelSendJoinHandle =
+    FuturesUnordered<JoinHandle<Result<(), SendError<Result<Vec<Value>, LabeledError>>>>>;
 
 impl DnsQuery {
     async fn run_impl(
@@ -121,15 +127,26 @@ impl DnsQuery {
                     let client = client.clone();
 
                     async move {
+                        let mut queue = FuturesUnordered::new();
+
                         while let Some(val) = Box::pin(request_rx.recv()).await {
                             let call = call.clone();
                             let client = client.clone();
                             let resp_tx = resp_tx.clone();
-                            let resp = Self::query(call, val, client).await;
-                            resp_tx.send(resp).await?;
+
+                            let handle = tokio::spawn(async move {
+                                let resp = Self::query(call, val, client).await;
+                                resp_tx.send(resp).await
+                            });
+
+                            queue.push(handle);
+
+                            if queue.len() == 100 {
+                                Self::drain_queue(&mut queue).await?;
+                            }
                         }
 
-                        Result::<_, SendError<_>>::Ok(())
+                        Self::drain_queue(&mut queue).await
                     }
                 });
 
@@ -159,6 +176,25 @@ impl DnsQuery {
                 data.span().unwrap_or(Span::unknown()),
             )),
         }
+    }
+
+    async fn drain_queue(queue: &mut ChannelSendJoinHandle) -> Result<(), LabeledError> {
+        for send in queue.iter_mut() {
+            send.await
+                .map_err(|join_err| {
+                    LabeledError::new("internal error")
+                        .with_label(format!("task panicked: {}", join_err), Span::unknown())
+                })?
+                .map_err(|send_err| {
+                    LabeledError::new("internal error").with_label(
+                        format!("failed to send dns query result: {}", send_err),
+                        Span::unknown(),
+                    )
+                })?;
+        }
+
+        queue.clear();
+        Ok(())
     }
 
     fn query(
