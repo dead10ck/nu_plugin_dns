@@ -1,5 +1,5 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
-use nu_protocol::{Example, LabeledError, PipelineData, Signature, SyntaxShape};
+use nu_protocol::{Example, LabeledError, PipelineData, Signature, SyntaxShape, Type};
 
 use crate::dns::constants;
 
@@ -21,8 +21,9 @@ impl PluginCommand for DnsQuery {
         call: &EvaluatedCall,
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(self.run_impl(plugin, engine, call, input))
+        plugin
+            .runtime
+            .block_on(self.run_impl(plugin, engine, call, input))
     }
 
     fn name(&self) -> &str {
@@ -35,6 +36,31 @@ impl PluginCommand for DnsQuery {
 
     fn signature(&self) -> nu_protocol::Signature {
         Signature::build(self.name())
+            .input_output_types(vec![
+                (Type::String, Type::Any),
+                (Type::List(Type::String.into()), Type::Any),
+                (Type::List(
+                    Type::Record(vec![
+                        ("name".into(), Type::String),
+                    ]).into()),
+                    Type::Any
+                ),
+                (Type::List(
+                    Type::Record(vec![
+                        ("name".into(), Type::String),
+                        ("type".into(), Type::String),
+                    ]).into()),
+                    Type::Any
+                ),
+                (Type::List(
+                    Type::Record(vec![
+                        ("name".into(), Type::String),
+                        ("type".into(), Type::String),
+                        ("class".into(), Type::String),
+                    ]).into()),
+                    Type::Any
+                ),
+            ])
             .rest(
                 constants::flags::NAME,
                 SyntaxShape::OneOf(vec![

@@ -202,6 +202,7 @@ impl<'r> Header<'r> {
     }
 }
 
+#[derive(Debug)]
 pub struct Query(pub(crate) hickory_proto::op::query::Query);
 
 impl Query {
