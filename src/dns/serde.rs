@@ -19,9 +19,9 @@ use hickory_proto::rr::RecordType;
 use hickory_proto::serialize::binary::BinEncodable;
 use hickory_resolver::Name;
 use nu_plugin::EvaluatedCall;
-use nu_plugin::LabeledError;
 use nu_protocol::record;
 use nu_protocol::FromValue;
+use nu_protocol::LabeledError;
 use nu_protocol::Span;
 use nu_protocol::Value;
 
@@ -202,6 +202,7 @@ impl<'r> Header<'r> {
     }
 }
 
+#[derive(Debug)]
 pub struct Query(pub(crate) hickory_proto::op::query::Query);
 
 impl Query {
@@ -242,16 +243,17 @@ impl Query {
                 None => hickory_proto::rr::DNSClass::IN,
             };
 
+        tracing::debug!(?value);
+
         match value {
             // If a record is given, it must have at least a name and qtype and
             // will be used as is, overriding any command line arguments.
             rec @ Value::Record { .. } => {
                 let span = rec.span();
 
-                let must_have_col_err = |col| LabeledError {
-                    label: "InvalidInputError".into(),
-                    msg: format!("Record must have a column named '{}'", col),
-                    span: Some(span),
+                let must_have_col_err = |col| {
+                    LabeledError::new("invalid input")
+                        .with_label(format!("Record must have a column named '{}'", col), span)
                 };
 
                 let name = Name::from_utf8(
@@ -259,16 +261,14 @@ impl Query {
                         rec.get_data_by_key(constants::columns::NAME)
                             .ok_or_else(|| must_have_col_err(constants::columns::NAME))?,
                     )
-                    .map_err(|err| LabeledError {
-                        label: "InvalidValueError".into(),
-                        msg: format!("Could not convert value to String: {}", err),
-                        span: Some(span),
+                    .map_err(|err| {
+                        LabeledError::new("invalid value")
+                            .with_label(format!("Could not convert value to String: {}", err), span)
                     })?,
                 )
-                .map_err(|err| LabeledError {
-                    label: "InvalidNameError".into(),
-                    msg: format!("Could not convert string to name: {}", err),
-                    span: Some(span),
+                .map_err(|err| {
+                    LabeledError::new("invalid name")
+                        .with_label(format!("Could not convert string to name: {}", err), span)
                 })?;
 
                 let qtype = RType::try_from(
@@ -293,11 +293,12 @@ impl Query {
             str_val @ Value::String { val, .. } => {
                 let span = str_val.span();
 
-                let name = Name::from_utf8(val).map_err(|err| LabeledError {
-                    label: "InvalidNameError".into(),
-                    msg: format!("Error parsing name: {}", err),
-                    span: Some(span),
+                let name = Name::from_utf8(val).map_err(|err| {
+                    LabeledError::new("invalid name")
+                        .with_label(format!("Error parsing name: {}", err), span)
                 })?;
+
+                tracing::debug!(?name);
 
                 let queries = qtypes
                     .into_iter()
@@ -311,24 +312,50 @@ impl Query {
                 Ok(queries)
             }
             list @ Value::List { vals, .. } => {
+                if !vals.iter().all(|val| {
+                    matches!(
+                        val,
+                        Value::Binary { .. }
+                            | Value::Int { .. }
+                            | Value::Bool { .. }
+                            | Value::Nothing { .. }
+                    )
+                }) {
+                    return Ok(vals
+                        .iter()
+                        .map(|val| Query::try_from_value(val, call))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect());
+                }
+
                 let span = list.span();
 
                 let name = Name::from_labels(
                     vals.iter()
                         .map(|val| match val {
                             Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
-                            _ => Err(LabeledError {
-                                label: "InvalidNameError".into(),
-                                msg: "Invalid input type for name".into(),
-                                span: Some(val.span()),
-                            }),
+                            Value::Int { val, .. } => {
+                                let bytes = val.to_ne_bytes();
+                                let non0 = bytes
+                                    .iter()
+                                    .position(|n| *n != 0)
+                                    .unwrap_or(bytes.len() - 1);
+
+                                Ok(Vec::from(&bytes[non0..]))
+                            }
+                            Value::Bool { val, .. } => Ok(vec![*val as u8]),
+                            Value::Nothing { .. } => Ok(vec![0]),
+
+                            _ => Err(LabeledError::new("invalid name")
+                                .with_label("Invalid input type for name", val.span())),
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 )
-                .map_err(|err| LabeledError {
-                    label: "NameParseError".into(),
-                    msg: format!("Error parsing into name: {}", err),
-                    span: Some(span),
+                .map_err(|err| {
+                    LabeledError::new("invalid name")
+                        .with_label(format!("Error parsing into name: {}", err), span)
                 })?;
 
                 let queries = qtypes
@@ -342,11 +369,8 @@ impl Query {
 
                 Ok(queries)
             }
-            val => Err(LabeledError {
-                label: "InvalidInputTypeError".into(),
-                msg: "Invalid input type".into(),
-                span: Some(val.span()),
-            }),
+            val => Err(LabeledError::new("invalid input type")
+                .with_label("invalid input type", val.span())),
         }
     }
 }
@@ -1033,10 +1057,9 @@ impl TryFrom<Value> for RType {
     type Error = LabeledError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        let qtype_err = |err: ProtoError, span: Span| LabeledError {
-            label: "InvalidRecordType".into(),
-            msg: format!("Error parsing record type: {}", err),
-            span: Some(span),
+        let qtype_err = |err: ProtoError, span: Span| {
+            LabeledError::new("invalid record type")
+                .with_label(format!("Error parsing record type: {}", err), span)
         };
 
         match value {
@@ -1048,20 +1071,18 @@ impl TryFrom<Value> for RType {
                 let rtype = RecordType::from(val as u16);
 
                 if let RecordType::Unknown(r) = rtype {
-                    return Err(LabeledError {
-                        label: "InvalidRecordType".into(),
-                        msg: format!("Error parsing record type: unknown code: {}", r),
-                        span: Some(value.span()),
-                    });
+                    return Err(LabeledError::new("invalid record type").with_label(
+                        format!("Error parsing record type: unknown code: {}", r),
+                        value.span(),
+                    ));
                 }
 
                 Ok(RType(rtype))
             }
-            value => Err(LabeledError {
-                label: "InvalidRecordType".into(),
-                msg: "Invalid type for record type argument. Must be either string or int.".into(),
-                span: Some(value.span()),
-            }),
+            value => Err(LabeledError::new("invalid record type").with_label(
+                "Invalid type for record type argument. Must be either string or int.",
+                value.span(),
+            )),
         }
     }
 }
@@ -1072,10 +1093,9 @@ impl TryFrom<Value> for DNSClass {
     type Error = LabeledError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        let class_err = |err: ProtoError, span: Span| LabeledError {
-            label: "InvalidDNSClass".into(),
-            msg: format!("Error parsing DNS class: {}", err),
-            span: Some(span),
+        let class_err = |err: ProtoError, span: Span| {
+            LabeledError::new("invalid DNS class")
+                .with_label(format!("Error parsing DNS class: {}", err), span)
         };
 
         let dns_class: DNSClass = match value {
@@ -1085,12 +1105,10 @@ impl TryFrom<Value> for DNSClass {
             ),
             Value::Int { val, .. } => DNSClass(hickory_proto::rr::DNSClass::from(val as u16)),
             value => {
-                return Err(LabeledError {
-                    label: "InvalidClassType".into(),
-                    msg: "Invalid type for class type argument. Must be either string or int."
-                        .into(),
-                    span: Some(value.span()),
-                });
+                return Err(LabeledError::new("invalid DNS class").with_label(
+                    "Invalid type for class type argument. Must be either string or int.",
+                    value.span(),
+                ));
             }
         };
 
@@ -1112,19 +1130,15 @@ impl TryFrom<Value> for Protocol {
                 "HTTPS" => Protocol(hickory_resolver::config::Protocol::Https),
                 "QUIC" => Protocol(hickory_resolver::config::Protocol::Quic),
                 proto => {
-                    return Err(LabeledError {
-                        label: "InvalidProtocol".into(),
-                        msg: format!("Invalid or unsupported protocol: {proto}"),
-                        span: Some(value.span()),
-                    })
+                    return Err(LabeledError::new("invalid protocol").with_label(
+                        format!("Invalid or unsupported protocol: {proto}"),
+                        value.span(),
+                    ));
                 }
             },
             _ => {
-                return Err(LabeledError {
-                    label: "InvalidInput".into(),
-                    msg: "Input must be a string".into(),
-                    span: Some(value.span()),
-                })
+                return Err(LabeledError::new("invalid input")
+                    .with_label("Input must be a string", value.span()))
             }
         };
 
@@ -1151,19 +1165,14 @@ impl TryFrom<Value> for DnssecMode {
                 "STRICT" => DnssecMode::Strict,
                 "OPPORTUNISTIC" => DnssecMode::Opportunistic,
                 _ => {
-                    return Err(LabeledError {
-                        label: "InvalidDnssecModeError".into(),
-                        msg: "Invalid DNSSEC mode. Must be one of: none, strict, opportunistic"
-                            .into(),
-                        span: Some(value.span()),
-                    });
+                    return Err(LabeledError::new("invalid DNSSEC mode").with_label(
+                        "Invalid DNSSEC mode. Must be one of: none, strict, opportunistic",
+                        value.span(),
+                    ));
                 }
             }),
-            _ => Err(LabeledError {
-                label: "InvalidInputError".into(),
-                msg: "Input must be a string".into(),
-                span: Some(value.span()),
-            }),
+            _ => Err(LabeledError::new("invalid input")
+                .with_label("Input must be a string", value.span())),
         }
     }
 }
@@ -1172,8 +1181,7 @@ pub mod util {
     use std::time::Duration;
 
     use chrono::TimeZone;
-    use nu_plugin::LabeledError;
-    use nu_protocol::{Span, Value};
+    use nu_protocol::{LabeledError, Span, Value};
 
     pub fn string_or_binary<V>(bytes: V) -> Value
     where
@@ -1195,20 +1203,17 @@ pub mod util {
     pub fn sec_to_date<U: Into<i64>>(sec: U, input_span: Span) -> Result<Value, LabeledError> {
         let secs = sec.into();
         let datetime = match chrono::Utc.timestamp_opt(secs, 0) {
-            chrono::LocalResult::None => Err(LabeledError {
-                label: "InvalidTimeError".into(),
-                msg: format!("Invalid time: {}", secs),
-                span: Some(input_span),
-            }),
+            chrono::LocalResult::None => Err(LabeledError::new("invalid time")
+                .with_label(format!("Invalid time: {}", secs), input_span)),
             chrono::LocalResult::Single(dt) => Ok(dt),
-            chrono::LocalResult::Ambiguous(dt1, dt2) => Err(LabeledError {
-                label: "InvalidTimeError".into(),
-                msg: format!(
-                    "Time {} produced ambiguous result: {} vs {}",
-                    secs, dt1, dt2
-                ),
-                span: Some(input_span),
-            }),
+            chrono::LocalResult::Ambiguous(dt1, dt2) => Err(LabeledError::new("invalid time")
+                .with_label(
+                    format!(
+                        "Time {} produced ambiguous result: {} vs {}",
+                        secs, dt1, dt2
+                    ),
+                    input_span,
+                )),
         }?
         .fixed_offset();
 

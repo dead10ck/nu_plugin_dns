@@ -31,11 +31,6 @@ pub mod columns {
     pub const TYPE: &str = "type";
     pub const CLASS: &str = "class";
 
-    pub const ADDRESS: &str = "address";
-    pub const PROTOCOL: &str = "protocol";
-
-    pub const TOP_COLS: &[&str] = &["nameserver", "messages"];
-
     pub const MESSAGE_COLS: &[&str] = &[
         "header",
         "question",

@@ -1,13 +1,18 @@
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
+    sync::Arc,
 };
 
-use nu_plugin::{EvaluatedCall, LabeledError};
-use nu_protocol::{record, Span, Value};
-
+use futures_util::{stream::FuturesUnordered, Future, StreamExt};
 use hickory_client::client::ClientHandle;
+
+use nu_plugin::{EngineInterface, EvaluatedCall};
+use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
+
 use hickory_resolver::config::{Protocol, ResolverConfig};
+
+use tokio::task::{JoinHandle, JoinSet};
 use tracing_subscriber::prelude::*;
 
 use self::{client::DnsClient, constants::flags, serde::Query};
@@ -17,65 +22,62 @@ mod constants;
 mod nu;
 mod serde;
 
-#[derive(Debug)]
-pub struct Dns {}
+type DnsQueryJoinHandle = JoinHandle<Result<(), LabeledError>>;
+type DnsQueryResult = FuturesUnordered<Result<Value, LabeledError>>;
+type DnsQueryPluginClient = Arc<
+    tokio::sync::RwLock<
+        Option<(
+            DnsClient,
+            JoinSet<Result<(), hickory_proto::error::ProtoError>>,
+        )>,
+    >,
+>;
+
+pub struct Dns {
+    runtime: tokio::runtime::Runtime,
+    tasks: Arc<std::sync::Mutex<Vec<DnsQueryJoinHandle>>>,
+    client: DnsQueryPluginClient,
+}
 
 impl Dns {
-    async fn run_impl(
-        &mut self,
-        name: &str,
-        _config: &Option<Value>,
-        call: &EvaluatedCall,
-        input: &Value,
-    ) -> Result<Value, LabeledError> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
-
-        match name {
-            constants::commands::QUERY => self.query(call, input).await,
-            _ => Err(LabeledError {
-                label: "NoSuchCommandError".into(),
-                msg: "No such command".into(),
-                span: Some(call.head),
-            }),
+    pub fn new() -> Self {
+        Self {
+            runtime: tokio::runtime::Runtime::new().unwrap(),
+            tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            client: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
-    fn get_queries(vals: &[&Value], call: &EvaluatedCall) -> Result<Vec<Query>, LabeledError> {
-        vals.iter()
-            .map(|input_val| match input_val {
-                Value::List { vals, .. } => {
-                    if vals.iter().all(|val| matches!(val, Value::Binary { .. })) {
-                        return Query::try_from_value(input_val, call);
-                    }
+    pub async fn dns_client(&self, call: &EvaluatedCall) -> Result<DnsClient, LabeledError> {
+        // we could use OnceLock once get_or_try_init is stable
+        if let Some((client, _)) = &*self.client.read().await {
+            return Ok(client.clone());
+        }
 
-                    Dns::get_queries(&vals.iter().collect::<Vec<_>>(), call)
-                }
-                _ => Query::try_from_value(input_val, call),
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(|res| res.into_iter().flatten().collect())
+        let mut client_guard = self.client.write().await;
+
+        // it is cheap to clone and hand back an owned client because underneath
+        // it is just a mpsc::Sender
+        match &mut *client_guard {
+            Some((client, _)) => Ok(client.clone()),
+            None => {
+                let (client, client_bg) = self.make_dns_client(call).await?;
+                *client_guard = Some((client.clone(), client_bg));
+                Ok(client)
+            }
+        }
     }
 
-    async fn query(&self, call: &EvaluatedCall, input: &Value) -> Result<Value, LabeledError> {
-        let arg_inputs: Vec<Value> = call.rest(0)?;
-        let input: Vec<&Value> = match input {
-            Value::Nothing { .. } => arg_inputs.iter().collect(),
-            val => {
-                if !arg_inputs.is_empty() {
-                    return Err(LabeledError {
-                        label: "AmbiguousInputError".into(),
-                        msg: "Input should either be positional args or piped, but not both".into(),
-                        span: Some(val.span()),
-                    });
-                }
-
-                vec![val]
-            }
-        };
-
+    async fn make_dns_client(
+        &self,
+        call: &EvaluatedCall,
+    ) -> Result<
+        (
+            DnsClient,
+            JoinSet<Result<(), hickory_proto::error::ProtoError>>,
+        ),
+        LabeledError,
+    > {
         let protocol = match call.get_flag_value(flags::PROTOCOL) {
             None => None,
             Some(val) => Some(serde::Protocol::try_from(val).map(|serde::Protocol(proto)| proto)?),
@@ -90,10 +92,9 @@ impl Dns {
                             SocketAddr::new(ip, constants::config::default_port(protocol))
                         })
                     })
-                    .map_err(|err| LabeledError {
-                        label: "InvalidServerAddress".into(),
-                        msg: format!("Invalid server: {}", err),
-                        span: Some(value.clone().span()),
+                    .map_err(|err| {
+                        LabeledError::new("invalid server")
+                            .with_label(err.to_string(), value.clone().span())
                     })?;
 
                 (addr, Some(value.span()), protocol)
@@ -115,53 +116,248 @@ impl Dns {
                 }
             }
             Some(val) => {
-                return Err(LabeledError {
-                    label: "InvalidServerAddressInputError".into(),
-                    msg: "invalid input type for server address".into(),
-                    span: Some(val.span()),
-                })
+                return Err(LabeledError::new("invalid server address")
+                    .with_label("server address should be a string", val.span()));
             }
         };
 
-        let queries: Vec<Query> = Dns::get_queries(&input, call)?;
-        let (mut client, _bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
+        let (client, bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
 
-        let messages: Vec<_> = futures_util::future::join_all(queries.into_iter().map(|query| {
-            let parts = query.0.into_parts();
-            client.query(parts.name, parts.query_class, parts.query_type)
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| LabeledError {
-            label: "DNSResponseError".into(),
-            msg: format!("Error in DNS response: {:?}", err),
-            span: None,
-        })?
-        .into_iter()
-        .map(|resp: hickory_proto::xfer::DnsResponse| {
-            let msg = serde::Message::new(resp.into_message());
-            msg.into_value(call)
-        })
-        .collect::<Result<_, _>>()?;
+        tracing::debug!(client.addr = ?addr, client.protocol = ?protocol);
 
-        let result = Value::record(
-            nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::TOP_COLS.iter().map(|s| (*s).into())),
-                vec![
-                    Value::record(
-                        record![
-                            constants::columns::ADDRESS => Value::string(addr.to_string(), Span::unknown()),
-                            constants::columns::PROTOCOL => Value::string(protocol.to_string(), Span::unknown()),
-                        ],
+        Ok((client, bg))
+    }
+
+    pub fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = Result<(), LabeledError>> + Send + 'static,
+    {
+        self.tasks.lock().unwrap().push(self.runtime.spawn(future));
+    }
+
+    pub fn spawn_blocking<F>(&self, future: F)
+    where
+        F: FnOnce() -> Result<(), LabeledError> + Send + 'static,
+    {
+        self.tasks
+            .lock()
+            .unwrap()
+            .push(self.runtime.spawn_blocking(future));
+    }
+}
+
+impl Default for Dns {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct DnsQuery;
+
+impl DnsQuery {
+    async fn run_impl(
+        &self,
+        plugin: &Dns,
+        _engine: &EngineInterface,
+        call: &EvaluatedCall,
+        input: PipelineData,
+    ) -> Result<PipelineData, LabeledError> {
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let arg_inputs: Value = call.nth(0).unwrap_or(Value::nothing(call.head));
+
+        let input: PipelineData = match input {
+            PipelineData::Empty | PipelineData::Value(Value::Nothing { .. }, _) => {
+                PipelineData::Value(arg_inputs, None)
+            }
+            val => {
+                if !arg_inputs.is_empty() {
+                    return Err(LabeledError::new("ambiguous input").with_label(
+                        "Input should either be positional args or piped, but not both",
+                        val.span().unwrap_or(Span::unknown()),
+                    ));
+                }
+
+                val
+            }
+        };
+
+        let client = plugin.dns_client(call).await?;
+        let call = Arc::new(call.clone());
+
+        match input {
+            PipelineData::Value(val, _) => {
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(phase = "input", data.kind = "value", ?val);
+                } else {
+                    tracing::debug!(phase = "input", data.kind = "value");
+                }
+
+                let values = Self::query(call, val, client.clone()).await;
+
+                let val = PipelineData::Value(
+                    Value::list(
+                        values.into_iter().collect::<Result<Vec<_>, _>>()?,
                         Span::unknown(),
                     ),
-                    Value::list(messages, Span::unknown()),
-                ],
-            )),
-            Span::unknown(),
-        );
+                    None,
+                );
 
-        Ok(result)
+                tracing::trace!(phase = "return", ?val);
+
+                Ok(val)
+            }
+            PipelineData::ListStream(mut stream, _) => {
+                tracing::debug!(phase = "input", data.kind = "stream");
+
+                let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(16);
+                let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(16);
+
+                plugin.spawn({
+                    let call = call.clone();
+                    let client = client.clone();
+
+                    async move {
+                        let mut queue = FuturesUnordered::new();
+
+                        while let Some(val) = Box::pin(request_rx.recv()).await {
+                            tracing::trace!(query = ?val, query.phase = "received");
+
+                            let call = call.clone();
+                            let client = client.clone();
+                            let resp_tx = resp_tx.clone();
+
+                            let handle = tokio::spawn(async move {
+                                let resps = Self::query(call, val, client).await;
+
+                                for resp in resps.into_iter() {
+                                    resp_tx.send(resp).await.map_err(|send_err| {
+                                        LabeledError::new("internal error").with_label(
+                                            format!(
+                                                "failed to send dns query result: {}",
+                                                send_err
+                                            ),
+                                            Span::unknown(),
+                                        )
+                                    })?;
+                                }
+
+                                Ok(())
+                            });
+
+                            queue.push(handle);
+
+                            if queue.len() == 100 {
+                                Self::drain_queue(&mut queue).await?;
+                            }
+                        }
+
+                        Self::drain_queue(&mut queue).await
+                    }
+                });
+
+                plugin.spawn_blocking(move || {
+                    stream
+                        .stream
+                        .try_for_each(|val| {
+                            tracing::trace!(query = ?val, query.phase = "send");
+                            request_tx.blocking_send(val)
+                        })
+                        .map_err(|send_err| {
+                            LabeledError::new("internal error").with_label(
+                                format!("failed to send dns query result: {}", send_err),
+                                Span::unknown(),
+                            )
+                        })
+                });
+
+                Ok(PipelineData::ListStream(
+                    ListStream::from_stream(
+                        std::iter::from_fn(move || {
+                            resp_rx.blocking_recv().map(|resp| {
+                                resp.unwrap_or_else(|err| Value::error(err.into(), Span::unknown()))
+                            })
+                        })
+                        .inspect(|val| tracing::debug!(phase = "return", ?val)),
+                        stream.ctrlc,
+                    ),
+                    None,
+                ))
+            }
+            data => Err(LabeledError::new("invalid input").with_label(
+                "Only values can be passed as input",
+                data.span().unwrap_or(Span::unknown()),
+            )),
+        }
+    }
+
+    async fn drain_queue(
+        queue: &mut FuturesUnordered<DnsQueryJoinHandle>,
+    ) -> Result<(), LabeledError> {
+        for send in queue.iter_mut() {
+            send.await.map_err(|join_err| {
+                LabeledError::new("internal error")
+                    .with_label(format!("task panicked: {}", join_err), Span::unknown())
+            })??;
+        }
+
+        tracing::debug!(queue.phase = "drain");
+
+        queue.clear();
+        Ok(())
+    }
+
+    async fn query(call: Arc<EvaluatedCall>, input: Value, client: DnsClient) -> DnsQueryResult {
+        let in_span = input.span();
+        let queries = match Query::try_from_value(&input, &call) {
+            Ok(queries) => queries,
+            Err(err) => {
+                return vec![Ok(Value::error(err.into(), in_span))]
+                    .into_iter()
+                    .collect()
+            }
+        };
+
+        tracing::debug!(request.queries = ?queries);
+
+        futures_util::stream::iter(queries)
+            .then(|query| {
+                let mut client = client.clone();
+                let call = call.clone();
+
+                async move {
+                    let parts = query.0.into_parts();
+
+                    if tracing::enabled!(tracing::Level::TRACE) {
+                        tracing::trace!(query.phase = "start", query.parts = ?parts);
+                    } else {
+                        tracing::debug!(query.phase = "start");
+                    }
+
+                    client
+                        .query(parts.name, parts.query_class, parts.query_type)
+                        .await
+                        .map_err(|err| {
+                            LabeledError::new("DNS error")
+                                .with_label(format!("Error in DNS response: {:?}", err), in_span)
+                        })
+                        .and_then(|resp: hickory_proto::xfer::DnsResponse| {
+                            let msg = serde::Message::new(resp.into_message());
+                            msg.into_value(&call)
+                        })
+                        .inspect_err(
+                            |err| tracing::debug!(query.phase = "finish", query.error = ?err),
+                        )
+                        .inspect(
+                            |resp| tracing::debug!(query.phase = "finish", query.response = ?resp),
+                        )
+                }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .await
     }
 }

@@ -1,22 +1,55 @@
-use nu_plugin::{EvaluatedCall, LabeledError, Plugin};
-use nu_protocol::{Category, PluginExample, PluginSignature, SyntaxShape, Value};
+use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
+use nu_protocol::{Example, LabeledError, PipelineData, Signature, SyntaxShape, Type};
 
 use crate::dns::constants;
 
-use super::Dns;
+use super::{Dns, DnsQuery};
 
 impl Plugin for Dns {
-    fn signature(&self) -> Vec<PluginSignature> {
-        // It is possible to declare multiple signature in a plugin
-        // Each signature will be converted to a command declaration once the
-        // plugin is registered to nushell
-        vec![PluginSignature::build(constants::commands::QUERY)
-            .usage("Perform a DNS query")
+    fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
+        vec![Box::new(DnsQuery)]
+    }
+}
+
+impl PluginCommand for DnsQuery {
+    type Plugin = Dns;
+
+    fn run(
+        &self,
+        plugin: &Self::Plugin,
+        engine: &EngineInterface,
+        call: &EvaluatedCall,
+        input: PipelineData,
+    ) -> Result<PipelineData, LabeledError> {
+        plugin
+            .runtime
+            .block_on(self.run_impl(plugin, engine, call, input))
+    }
+
+    fn name(&self) -> &str {
+        constants::commands::QUERY
+    }
+
+    fn usage(&self) -> &str {
+        "Perform a DNS query"
+    }
+
+    fn signature(&self) -> nu_protocol::Signature {
+        Signature::build(self.name())
+            .input_output_types(vec![
+                (Type::String, Type::Any),
+                (Type::List(Type::Any.into()), Type::Any),
+            ])
             .rest(
                 constants::flags::NAME,
                 SyntaxShape::OneOf(vec![
                     SyntaxShape::String,
-                    SyntaxShape::List(Box::new(SyntaxShape::Binary)),
+                    SyntaxShape::List(Box::new(SyntaxShape::OneOf(vec![
+                        SyntaxShape::String,
+                        SyntaxShape::Binary,
+                        SyntaxShape::Int,
+                        SyntaxShape::Boolean,
+                    ]))),
                 ]),
                 "DNS record name",
             )
@@ -51,54 +84,50 @@ impl Plugin for Dns {
                 "DNS name of the TLS certificate in use by the nameserver (for TLS and HTTPS only)",
                 Some('n'),
             )
-            .plugin_examples(vec![
-                PluginExample {
-                    example: format!("{} google.com", constants::commands::QUERY),
-                    description: "simple query for A / AAAA records".into(),
-                    result: None,
-                },
-                PluginExample {
-                    example: format!("{} --type CNAME google.com", constants::commands::QUERY),
-                    description: "specify query type".into(),
-                    result: None,
-                },
-                PluginExample {
-                    example: format!("{} --type [cname, mx] -c google.com", constants::commands::QUERY),
-                    description: "specify multiple query types".into(),
-                    result: None,
-                },
-                PluginExample {
-                    example: format!("{} --type [5, 15] -c google.com", constants::commands::QUERY),
-                    description: "specify query types by numeric ID, and get numeric IDs in output".into(),
-                    result: None,
-                },
-                PluginExample {
-                    example: format!("'google.com' | {}", constants::commands::QUERY),
-                    description: "pipe name into command".into(),
-                    result: None,
-                },
-                PluginExample {
-                    example: format!("['google.com', 'amazon.com'] | {}", constants::commands::QUERY),
-                    description: "pipe lists of names into command".into(),
-                    result: None,
-                },
-                PluginExample {
-                    example: format!("[{{name: 'google.com', type: 'A'}}, {{name: 'amazon.com', type: 'A'}}] | {}", constants::commands::QUERY),
-                    description: "pipe table of queries into command (ignores --type flag)".into(),
-                    result: None,
-                },
-            ])
-            .category(Category::Network)]
     }
 
-    fn run(
-        &mut self,
-        name: &str,
-        config: &Option<Value>,
-        call: &EvaluatedCall,
-        input: &Value,
-    ) -> Result<Value, LabeledError> {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(self.run_impl(name, config, call, input))
+    fn examples(&self) -> Vec<nu_protocol::Example> {
+        vec![
+            Example {
+                example: "dns query google.com",
+                description: "simple query for A / AAAA records",
+                result: None,
+            },
+            Example {
+                example: "dns query --type CNAME google.com",
+                description: "specify query type",
+                result: None,
+            },
+            Example {
+                example: "dns query --type [cname, mx] -c google.com",
+                description: "specify multiple query types",
+                result: None,
+            },
+            Example {
+                example: "dns query --type [5, 15] -c google.com",
+                description: "specify query types by numeric ID, and get numeric IDs in output"
+                    ,
+                result: None,
+            },
+            Example {
+                example: "'google.com' | dns query",
+                description: "pipe nameommand",
+                result: None,
+            },
+            Example {
+                example: "['google.com', 'amazon.com'] | dns query",
+                description: "pipe lists of namesommand",
+                result: None,
+            },
+            Example {
+                example: "[{{name: 'google.com', type: 'A'}}, {{name: 'amazon.com', type: 'A'}}] | dns query",
+                description: "pipe table of queriesommand (ignores --type flag)",
+                result: None,
+            },
+        ]
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["dns", "network", "dig"]
     }
 }
