@@ -312,15 +312,39 @@ impl Query {
                 Ok(queries)
             }
             list @ Value::List { vals, .. } => {
+                if !vals.iter().all(|val| {
+                    matches!(
+                        val,
+                        Value::Binary { .. }
+                            | Value::Int { .. }
+                            | Value::Bool { .. }
+                            | Value::Nothing { .. }
+                    )
+                }) {
+                    return Ok(vals
+                        .iter()
+                        .map(|val| Query::try_from_value(val, call))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect());
+                }
+
                 let span = list.span();
 
                 let name = Name::from_labels(
                     vals.iter()
                         .map(|val| match val {
                             Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
-                            Value::String { val, .. } => Ok(Vec::from(val.as_bytes())),
+                            Value::Int { val, .. } => {
+                                let bytes = val.to_ne_bytes();
+                                let non0 = bytes
+                                    .iter()
+                                    .position(|n| *n != 0)
+                                    .unwrap_or(bytes.len() - 1);
 
-                            Value::Int { val, .. } => Ok(Vec::from(val.to_ne_bytes())),
+                                Ok(Vec::from(&bytes[non0..]))
+                            }
                             Value::Bool { val, .. } => Ok(vec![*val as u8]),
                             Value::Nothing { .. } => Ok(vec![0]),
 

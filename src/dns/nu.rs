@@ -38,28 +38,7 @@ impl PluginCommand for DnsQuery {
         Signature::build(self.name())
             .input_output_types(vec![
                 (Type::String, Type::Any),
-                (Type::List(Type::String.into()), Type::Any),
-                (Type::List(
-                    Type::Record(vec![
-                        ("name".into(), Type::String),
-                    ]).into()),
-                    Type::Any
-                ),
-                (Type::List(
-                    Type::Record(vec![
-                        ("name".into(), Type::String),
-                        ("type".into(), Type::String),
-                    ]).into()),
-                    Type::Any
-                ),
-                (Type::List(
-                    Type::Record(vec![
-                        ("name".into(), Type::String),
-                        ("type".into(), Type::String),
-                        ("class".into(), Type::String),
-                    ]).into()),
-                    Type::Any
-                ),
+                (Type::List(Type::Any.into()), Type::Any),
             ])
             .rest(
                 constants::flags::NAME,
