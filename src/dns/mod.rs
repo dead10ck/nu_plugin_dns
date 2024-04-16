@@ -191,7 +191,11 @@ impl DnsQuery {
 
         match input {
             PipelineData::Value(val, _) => {
-                tracing::debug!(phase = "input", data.kind = "value", ?val);
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(phase = "input", data.kind = "value", ?val);
+                } else {
+                    tracing::debug!(phase = "input", data.kind = "value");
+                }
 
                 let values = Self::query(call, val, client.clone()).await;
 
@@ -203,7 +207,7 @@ impl DnsQuery {
                     None,
                 );
 
-                tracing::debug!(phase = "return", ?val);
+                tracing::trace!(phase = "return", ?val);
 
                 Ok(val)
             }
@@ -221,7 +225,7 @@ impl DnsQuery {
                         let mut queue = FuturesUnordered::new();
 
                         while let Some(val) = Box::pin(request_rx.recv()).await {
-                            tracing::debug!(query = ?val, query.phase = "received");
+                            tracing::trace!(query = ?val, query.phase = "received");
 
                             let call = call.clone();
                             let client = client.clone();
@@ -260,7 +264,7 @@ impl DnsQuery {
                     stream
                         .stream
                         .try_for_each(|val| {
-                            tracing::debug!(query = ?val, query.phase = "send");
+                            tracing::trace!(query = ?val, query.phase = "send");
                             request_tx.blocking_send(val)
                         })
                         .map_err(|send_err| {
@@ -301,7 +305,7 @@ impl DnsQuery {
             })??;
         }
 
-        tracing::debug!(?queue, queue.phase = "drain");
+        tracing::debug!(queue.phase = "drain");
 
         queue.clear();
         Ok(())
@@ -327,7 +331,12 @@ impl DnsQuery {
 
                 async move {
                     let parts = query.0.into_parts();
-                    tracing::debug!(query.phase = "start", query.parts = ?parts);
+
+                    if tracing::enabled!(tracing::Level::TRACE) {
+                        tracing::trace!(query.phase = "start", query.parts = ?parts);
+                    } else {
+                        tracing::debug!(query.phase = "start");
+                    }
 
                     client
                         .query(parts.name, parts.query_class, parts.query_type)
