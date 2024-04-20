@@ -18,22 +18,22 @@ use hickory_proto::rr::rdata::tlsa;
 use hickory_proto::rr::RecordType;
 use hickory_proto::serialize::binary::BinEncodable;
 use hickory_resolver::Name;
-use nu_plugin::EvaluatedCall;
 use nu_protocol::record;
 use nu_protocol::FromValue;
 use nu_protocol::LabeledError;
 use nu_protocol::Span;
 use nu_protocol::Value;
 
+use super::config::Config;
 use super::constants;
 
-fn code_to_record_u16<C>(code: C, call: &EvaluatedCall) -> Value
+fn code_to_record_u16<C>(code: C, config: &Config) -> Value
 where
     C: Display + Into<u16>,
 {
     let code_string = Value::string(code.to_string(), Span::unknown());
 
-    if matches!(call.has_flag(constants::flags::CODE), Ok(true)) {
+    if config.code.item {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
@@ -53,13 +53,13 @@ where
     }
 }
 
-fn code_to_record_u8<C>(code: C, call: &EvaluatedCall) -> Value
+fn code_to_record_u8<C>(code: C, config: &Config) -> Value
 where
     C: Display + Into<u8>,
 {
     let code_string = Value::string(code.to_string(), Span::unknown());
 
-    if matches!(call.has_flag(constants::flags::CODE), Ok(true)) {
+    if config.code.item {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
@@ -98,15 +98,15 @@ impl Message {
         self.bytes.len()
     }
 
-    pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
         let size = Value::filesize(self.size() as i64, Span::unknown());
         let message = self.into_inner();
-        let header = Header(message.header()).into_value(call);
+        let header = Header(message.header()).into_value(config);
         let mut parts = message.into_parts();
 
         let question = parts.queries.pop().map_or_else(
             || Value::record(record!(), Span::unknown()),
-            |q| Query(q).into_value(call),
+            |q| Query(q).into_value(config),
         );
 
         let parse_records =
@@ -114,7 +114,7 @@ impl Message {
                 Ok(Value::list(
                     records
                         .into_iter()
-                        .map(|record| Record(record).into_value(call))
+                        .map(|record| Record(record).into_value(config))
                         .collect::<Result<_, _>>()?,
                     Span::unknown(),
                 ))
@@ -125,7 +125,7 @@ impl Message {
         let additional = parse_records(parts.additionals)?;
         let edns = parts
             .edns
-            .map(|edns| Edns(edns).into_value(call))
+            .map(|edns| Edns(edns).into_value(config))
             .unwrap_or(Value::nothing(Span::unknown()));
 
         Ok(Value::record(
@@ -141,13 +141,13 @@ impl Message {
 pub struct Header<'r>(pub(crate) &'r hickory_proto::op::Header);
 
 impl<'r> Header<'r> {
-    pub fn into_value(self, call: &EvaluatedCall) -> Value {
+    pub fn into_value(self, config: &Config) -> Value {
         let Header(header) = self;
 
         let id = Value::int(header.id().into(), Span::unknown());
 
         let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
-        let message_type = if matches!(call.has_flag(constants::flags::CODE), Ok(true)) {
+        let message_type = if config.code.item {
             Value::record(
                 nu_protocol::Record::from_iter(std::iter::zip(
                     Vec::from_iter(
@@ -166,13 +166,13 @@ impl<'r> Header<'r> {
             message_type_string
         };
 
-        let op_code = code_to_record_u8(header.op_code(), call);
+        let op_code = code_to_record_u8(header.op_code(), config);
         let authoritative = Value::bool(header.authoritative(), Span::unknown());
         let truncated = Value::bool(header.truncated(), Span::unknown());
         let recursion_desired = Value::bool(header.recursion_desired(), Span::unknown());
         let recursion_available = Value::bool(header.recursion_available(), Span::unknown());
         let authentic_data = Value::bool(header.authentic_data(), Span::unknown());
-        let response_code = code_to_record_u16(header.response_code(), call);
+        let response_code = code_to_record_u16(header.response_code(), config);
         let query_count = Value::int(header.query_count().into(), Span::unknown());
         let answer_count = Value::int(header.answer_count().into(), Span::unknown());
         let name_server_count = Value::int(header.name_server_count().into(), Span::unknown());
@@ -206,12 +206,12 @@ impl<'r> Header<'r> {
 pub struct Query(pub(crate) hickory_proto::op::query::Query);
 
 impl Query {
-    pub fn into_value(self, call: &EvaluatedCall) -> Value {
+    pub fn into_value(self, config: &Config) -> Value {
         let Query(query) = self;
 
         let name = Value::string(query.name().to_utf8(), Span::unknown());
-        let qtype = code_to_record_u16(query.query_type(), call);
-        let class = code_to_record_u16(query.query_class(), call);
+        let qtype = code_to_record_u16(query.query_type(), config);
+        let class = code_to_record_u16(query.query_class(), config);
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
@@ -224,25 +224,7 @@ impl Query {
 }
 
 impl Query {
-    pub fn try_from_value(value: &Value, call: &EvaluatedCall) -> Result<Vec<Self>, LabeledError> {
-        let qtypes: Vec<RecordType> = match call.get_flag_value(constants::flags::TYPE) {
-            Some(Value::List { vals, .. }) => vals
-                .into_iter()
-                .map(RType::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|RType(rtype)| rtype)
-                .collect(),
-            Some(val) => vec![RType::try_from(val)?.0],
-            None => vec![RecordType::AAAA, RecordType::A],
-        };
-
-        let dns_class: hickory_proto::rr::DNSClass =
-            match call.get_flag_value(constants::flags::CLASS) {
-                Some(val) => DNSClass::try_from(val)?.0,
-                None => hickory_proto::rr::DNSClass::IN,
-            };
-
+    pub fn try_from_value(value: &Value, config: &Config) -> Result<Vec<Self>, LabeledError> {
         tracing::debug!(?value);
 
         match value {
@@ -272,7 +254,7 @@ impl Query {
                 })?;
 
                 let qtype = RType::try_from(
-                    rec.get_data_by_key(constants::columns::TYPE)
+                    &rec.get_data_by_key(constants::columns::TYPE)
                         .ok_or_else(|| must_have_col_err(constants::columns::TYPE))?,
                 )?;
 
@@ -300,11 +282,13 @@ impl Query {
 
                 tracing::debug!(?name);
 
-                let queries = qtypes
-                    .into_iter()
+                let queries = config
+                    .qtypes
+                    .item
+                    .iter()
                     .map(|qtype| {
-                        let mut query = hickory_proto::op::Query::query(name.clone(), qtype);
-                        query.set_query_class(dns_class);
+                        let mut query = hickory_proto::op::Query::query(name.clone(), qtype.item);
+                        query.set_query_class(config.class.item);
                         Query(query)
                     })
                     .collect();
@@ -323,7 +307,7 @@ impl Query {
                 }) {
                     return Ok(vals
                         .iter()
-                        .map(|val| Query::try_from_value(val, call))
+                        .map(|val| Query::try_from_value(val, config))
                         .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .flatten()
@@ -358,11 +342,13 @@ impl Query {
                         .with_label(format!("Error parsing into name: {}", err), span)
                 })?;
 
-                let queries = qtypes
-                    .into_iter()
+                let queries = config
+                    .qtypes
+                    .item
+                    .iter()
                     .map(|qtype| {
-                        let mut query = hickory_proto::op::Query::query(name.clone(), qtype);
-                        query.set_query_class(dns_class);
+                        let mut query = hickory_proto::op::Query::query(name.clone(), qtype.item);
+                        query.set_query_class(config.class.item);
                         Query(query)
                     })
                     .collect();
@@ -378,16 +364,16 @@ impl Query {
 pub struct Record(pub(crate) hickory_proto::rr::resource::Record);
 
 impl Record {
-    pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
         let Record(record) = self;
         let parts = record.into_parts();
 
         let name = Value::string(parts.name_labels.to_utf8(), Span::unknown());
-        let rtype = code_to_record_u16(parts.rr_type, call);
-        let class = code_to_record_u16(parts.dns_class, call);
+        let rtype = code_to_record_u16(parts.rr_type, config);
+        let class = code_to_record_u16(parts.dns_class, config);
         let ttl = util::sec_to_duration(parts.ttl);
         let rdata = match parts.rdata {
-            Some(data) => RData(data).into_value(call)?,
+            Some(data) => RData(data).into_value(config)?,
             None => Value::nothing(Span::unknown()),
         };
 
@@ -404,7 +390,7 @@ impl Record {
 pub struct RData(pub(crate) hickory_proto::rr::RData);
 
 impl RData {
-    pub fn into_value(self, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
         let val = match self.0 {
             hickory_proto::rr::RData::CAA(caa) => {
                 let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
@@ -576,7 +562,7 @@ impl RData {
             hickory_proto::rr::RData::OPENPGPKEY(key) => {
                 Value::binary(key.public_key(), Span::unknown())
             }
-            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(call),
+            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(config),
             hickory_proto::rr::RData::PTR(name) => Value::string(name.to_string(), Span::unknown()),
 
             hickory_proto::rr::RData::SOA(soa) => {
@@ -860,8 +846,8 @@ impl RData {
                     let algorithm = Value::string(sig.algorithm().to_string(), Span::unknown());
                     let num_labels = Value::int(sig.num_labels() as i64, Span::unknown());
                     let original_ttl = util::sec_to_duration(sig.original_ttl());
-                    let sig_expiration = util::sec_to_date(sig.sig_expiration(), call.head)?;
-                    let sig_inception = util::sec_to_date(sig.sig_inception(), call.head)?;
+                    let sig_expiration = util::sec_to_date(sig.sig_expiration(), Span::unknown())?;
+                    let sig_inception = util::sec_to_date(sig.sig_inception(), Span::unknown())?;
                     let key_tag = Value::int(sig.key_tag() as i64, Span::unknown());
                     let signer_name = Value::string(sig.signer_name().to_string(), Span::unknown());
                     let sig = Value::binary(sig.sig(), Span::unknown());
@@ -884,7 +870,7 @@ impl RData {
                 DNSSECRData::TSIG(tsig) => {
                     // [NOTE] oid, error, and other do not have accessors
                     let algorithm = Value::string(tsig.algorithm().to_string(), Span::unknown());
-                    let time = util::sec_to_date(tsig.time() as i64, call.head)?;
+                    let time = util::sec_to_date(tsig.time() as i64, Span::unknown())?;
                     let fudge = Value::int(tsig.fudge() as i64, Span::unknown());
                     let mac = Value::binary(tsig.mac(), Span::unknown());
                     // let oid = Value::int(tsig.oid() as i64, Span::unknown());
@@ -975,13 +961,13 @@ fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
 pub struct Edns(pub(crate) hickory_proto::op::Edns);
 
 impl Edns {
-    pub fn into_value(self, call: &EvaluatedCall) -> Value {
+    pub fn into_value(self, config: &Config) -> Value {
         let edns = self.0;
         let rcode_high = Value::int(edns.rcode_high() as i64, Span::unknown());
         let version = Value::int(edns.version() as i64, Span::unknown());
         let dnssec_ok = Value::bool(edns.dnssec_ok(), Span::unknown());
         let max_payload = Value::filesize(edns.max_payload() as i64, Span::unknown());
-        let opts = Opt(edns.options()).into_value(call);
+        let opts = Opt(edns.options()).into_value(config);
 
         Value::record(
             record![
@@ -999,7 +985,7 @@ impl Edns {
 pub struct Opt<'o>(pub(crate) &'o hickory_proto::rr::rdata::OPT);
 
 impl<'o> Opt<'o> {
-    pub fn into_value(self, _call: &EvaluatedCall) -> Value {
+    pub fn into_value(self, _config: &Config) -> Value {
         let opts: HashMap<_, _> = self
             .0
             .as_ref()
@@ -1053,10 +1039,10 @@ impl<'o> Opt<'o> {
 
 pub struct RType(pub(crate) hickory_proto::rr::RecordType);
 
-impl TryFrom<Value> for RType {
+impl TryFrom<&Value> for RType {
     type Error = LabeledError;
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
         let qtype_err = |err: ProtoError, span: Span| {
             LabeledError::new("invalid record type")
                 .with_label(format!("Error parsing record type: {}", err), span)
@@ -1068,7 +1054,7 @@ impl TryFrom<Value> for RType {
                     .map_err(|err| qtype_err(err, value.span()))?,
             )),
             Value::Int { val, .. } => {
-                let rtype = RecordType::from(val as u16);
+                let rtype = RecordType::from(*val as u16);
 
                 if let RecordType::Unknown(r) = rtype {
                     return Err(LabeledError::new("invalid record type").with_label(

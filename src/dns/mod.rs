@@ -1,8 +1,4 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    str::FromStr,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use futures_util::{stream::FuturesUnordered, Future, StreamExt};
 use hickory_client::client::ClientHandle;
@@ -10,17 +6,18 @@ use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, ListStream, PipelineData, Span, Value};
 
-use hickory_resolver::config::{Protocol, ResolverConfig};
-
 use tokio::task::{JoinHandle, JoinSet};
 use tracing_subscriber::prelude::*;
 
-use self::{client::DnsClient, constants::flags, serde::Query};
+use self::{client::DnsClient, config::Config, serde::Query};
 
 mod client;
+mod config;
 mod constants;
 mod nu;
 mod serde;
+#[macro_use]
+mod util;
 
 type DnsQueryJoinHandle = JoinHandle<Result<(), LabeledError>>;
 type DnsQueryResult = FuturesUnordered<Result<Value, LabeledError>>;
@@ -48,7 +45,7 @@ impl Dns {
         }
     }
 
-    pub async fn dns_client(&self, call: &EvaluatedCall) -> Result<DnsClient, LabeledError> {
+    pub async fn dns_client(&self, config: &Config) -> Result<DnsClient, LabeledError> {
         // we could use OnceLock once get_or_try_init is stable
         if let Some((client, _)) = &*self.client.read().await {
             return Ok(client.clone());
@@ -61,7 +58,7 @@ impl Dns {
         match &mut *client_guard {
             Some((client, _)) => Ok(client.clone()),
             None => {
-                let (client, client_bg) = self.make_dns_client(call).await?;
+                let (client, client_bg) = self.make_dns_client(config).await?;
                 *client_guard = Some((client.clone(), client_bg));
                 Ok(client)
             }
@@ -70,7 +67,7 @@ impl Dns {
 
     async fn make_dns_client(
         &self,
-        call: &EvaluatedCall,
+        config: &Config,
     ) -> Result<
         (
             DnsClient,
@@ -78,53 +75,8 @@ impl Dns {
         ),
         LabeledError,
     > {
-        let protocol = match call.get_flag_value(flags::PROTOCOL) {
-            None => None,
-            Some(val) => Some(serde::Protocol::try_from(val).map(|serde::Protocol(proto)| proto)?),
-        };
-
-        let (addr, addr_span, protocol) = match call.get_flag_value(flags::SERVER) {
-            Some(ref value @ Value::String { .. }) => {
-                let protocol = protocol.unwrap_or(Protocol::Udp);
-                let addr = SocketAddr::from_str(value.as_str().unwrap())
-                    .or_else(|_| {
-                        IpAddr::from_str(value.as_str().unwrap()).map(|ip| {
-                            SocketAddr::new(ip, constants::config::default_port(protocol))
-                        })
-                    })
-                    .map_err(|err| {
-                        LabeledError::new("invalid server")
-                            .with_label(err.to_string(), value.clone().span())
-                    })?;
-
-                (addr, Some(value.span()), protocol)
-            }
-            None => {
-                let (config, _) =
-                    hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
-                tracing::debug!(?config);
-                match config.name_servers() {
-                    [ns, ..] => (ns.socket_addr, None, ns.protocol),
-                    [] => {
-                        let config = ResolverConfig::default();
-                        let ns = config.name_servers().first().unwrap();
-
-                        // if protocol is explicitly configured, it should take
-                        // precedence over the system config
-                        (ns.socket_addr, None, protocol.unwrap_or(ns.protocol))
-                    }
-                }
-            }
-            Some(val) => {
-                return Err(LabeledError::new("invalid server address")
-                    .with_label("server address should be a string", val.span()));
-            }
-        };
-
-        let (client, bg) = DnsClient::new(addr, addr_span, protocol, call).await?;
-
-        tracing::debug!(client.addr = ?addr, client.protocol = ?protocol);
-
+        let (client, bg) = DnsClient::new(config).await?;
+        tracing::debug!(client.addr = ?config.server, client.protocol = ?config.protocol);
         Ok((client, bg))
     }
 
@@ -168,6 +120,9 @@ impl DnsQuery {
             .with(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
+        // [TODO]
+        // let config = engine.get_plugin_config()?.try_into()?;
+        let config = Config::try_from(call)?;
         let arg_inputs: Value = call.nth(0).unwrap_or(Value::nothing(call.head));
 
         let input: PipelineData = match input {
@@ -186,8 +141,8 @@ impl DnsQuery {
             }
         };
 
-        let client = plugin.dns_client(call).await?;
-        let call = Arc::new(call.clone());
+        let client = plugin.dns_client(&config).await?;
+        let config = Arc::new(config);
 
         match input {
             PipelineData::Value(val, _) => {
@@ -197,7 +152,7 @@ impl DnsQuery {
                     tracing::debug!(phase = "input", data.kind = "value");
                 }
 
-                let values = Self::query(call, val, client.clone()).await;
+                let values = Self::query(config, val, client.clone()).await;
 
                 let val = PipelineData::Value(
                     Value::list(
@@ -218,7 +173,6 @@ impl DnsQuery {
                 let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(16);
 
                 plugin.spawn({
-                    let call = call.clone();
                     let client = client.clone();
 
                     async move {
@@ -227,12 +181,12 @@ impl DnsQuery {
                         while let Some(val) = Box::pin(request_rx.recv()).await {
                             tracing::trace!(query = ?val, query.phase = "received");
 
-                            let call = call.clone();
+                            let config = config.clone();
                             let client = client.clone();
                             let resp_tx = resp_tx.clone();
 
                             let handle = tokio::spawn(async move {
-                                let resps = Self::query(call, val, client).await;
+                                let resps = Self::query(config, val, client).await;
 
                                 for resp in resps.into_iter() {
                                     resp_tx.send(resp).await.map_err(|send_err| {
@@ -311,9 +265,9 @@ impl DnsQuery {
         Ok(())
     }
 
-    async fn query(call: Arc<EvaluatedCall>, input: Value, client: DnsClient) -> DnsQueryResult {
+    async fn query(config: Arc<Config>, input: Value, client: DnsClient) -> DnsQueryResult {
         let in_span = input.span();
-        let queries = match Query::try_from_value(&input, &call) {
+        let queries = match Query::try_from_value(&input, &config) {
             Ok(queries) => queries,
             Err(err) => {
                 return vec![Ok(Value::error(err.into(), in_span))]
@@ -327,7 +281,7 @@ impl DnsQuery {
         futures_util::stream::iter(queries)
             .then(|query| {
                 let mut client = client.clone();
-                let call = call.clone();
+                let config = config.clone();
 
                 async move {
                     let parts = query.0.into_parts();
@@ -347,7 +301,7 @@ impl DnsQuery {
                         })
                         .and_then(|resp: hickory_proto::xfer::DnsResponse| {
                             let msg = serde::Message::new(resp.into_message());
-                            msg.into_value(&call)
+                            msg.into_value(&config)
                         })
                         .inspect_err(
                             |err| tracing::debug!(query.phase = "finish", query.error = ?err),

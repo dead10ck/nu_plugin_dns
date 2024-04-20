@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use futures_util::{future, Stream, StreamExt};
 use hickory_client::client::{AsyncClient, AsyncDnssecClient};
@@ -14,14 +14,11 @@ use hickory_proto::{
     DnsHandle, DnsMultiplexer,
 };
 use hickory_resolver::config::Protocol;
-use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Span};
 use rustls::{OwnedTrustAnchor, RootCertStore};
 use tokio::{net::UdpSocket, task::JoinSet};
 
-use crate::dns::{constants, serde};
-
-use super::serde::DnssecMode;
+use super::{config::Config, serde::DnssecMode};
 
 type DnsHandleResponse =
     Pin<Box<(dyn Stream<Item = Result<DnsResponse, ProtoError>> + Send + 'static)>>;
@@ -43,28 +40,20 @@ type TokioTcpConnect = AsyncIoTokioAsStd<tokio::net::TcpStream>;
 
 impl DnsClient {
     pub async fn new(
-        addr: SocketAddr,
-        addr_span: Option<Span>,
-        protocol: Protocol,
-        call: &EvaluatedCall,
+        config: &Config,
     ) -> Result<(Self, JoinSet<Result<(), ProtoError>>), LabeledError> {
         let connect_err = |err| {
             LabeledError::new("connection error").with_label(
                 format!("Error creating client connection: {}", err),
-                addr_span.unwrap_or(Span::unknown()),
+                Span::unknown(),
             )
-        };
-
-        let dnssec_mode = match call.get_flag_value(constants::flags::DNSSEC) {
-            Some(val) => serde::DnssecMode::try_from(val)?,
-            None => serde::DnssecMode::Opportunistic,
         };
 
         let mut join_set = JoinSet::new();
 
         macro_rules! make_clients {
             ($conn:expr) => {{
-                let async_client = if dnssec_mode != DnssecMode::Strict {
+                let async_client = if config.dnssec_mode.item != DnssecMode::Strict {
                     let (async_client, bg) =
                         AsyncClient::connect($conn).await.map_err(connect_err)?;
                     join_set.spawn(bg);
@@ -73,7 +62,7 @@ impl DnsClient {
                     None
                 };
 
-                let dnssec_client = if dnssec_mode != DnssecMode::None {
+                let dnssec_client = if config.dnssec_mode.item != DnssecMode::None {
                     let (dnssec_client, bg) = AsyncDnssecClient::connect($conn)
                         .await
                         .map_err(connect_err)?;
@@ -86,13 +75,14 @@ impl DnsClient {
             }};
         }
 
-        let (async_client, dnssec_client) = match protocol {
+        let (async_client, dnssec_client) = match config.protocol.item {
             Protocol::Udp => {
-                make_clients!(UdpClientStream::<UdpSocket>::new(addr))
+                make_clients!(UdpClientStream::<UdpSocket>::new(config.server.item))
             }
             Protocol::Tcp => {
                 make_clients!({
-                    let (stream, sender) = TcpClientStream::<TokioTcpConnect>::new(addr);
+                    let (stream, sender) =
+                        TcpClientStream::<TokioTcpConnect>::new(config.server.item);
                     DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None)
                 })
             }
@@ -111,23 +101,18 @@ impl DnsClient {
                     .with_root_certificates(root_store)
                     .with_no_client_auth();
 
-                let dns_name = call
-                    .get_flag_value(constants::flags::DNS_NAME)
-                    .ok_or_else(|| {
-                        LabeledError::new("missing required argument")
-                            .with_label("HTTPS requires a DNS name", call.head)
-                    })?
-                    .into_string()?;
-
                 match proto {
                     Protocol::Tls => {
                         let client_config = Arc::new(client_config);
                         make_clients!({
-                            let (stream, sender) = hickory_proto::rustls::tls_client_connect::<
-                                TokioTcpConnect,
-                            >(
-                                addr, dns_name.clone(), client_config.clone()
-                            );
+                            let (stream, sender) =
+                                hickory_proto::rustls::tls_client_connect::<TokioTcpConnect>(
+                                    config.server.item,
+                                    // safe to unwrap because having a DNS name
+                                    // is enforced when constructing the config
+                                    config.dns_name.as_ref().unwrap().clone().item,
+                                    client_config.clone(),
+                                );
                             DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None)
                         })
                     }
@@ -135,20 +120,26 @@ impl DnsClient {
                         let client_config = Arc::new(client_config);
                         make_clients!({
                             HttpsClientStreamBuilder::with_client_config(client_config.clone())
-                                .build::<TokioTcpConnect>(addr, dns_name.clone())
+                                .build::<TokioTcpConnect>(
+                                config.server.item,
+                                config.dns_name.as_ref().unwrap().clone().item,
+                            )
                         })
                     }
                     Protocol::Quic => make_clients!({
                         let mut builder = QuicClientStream::builder();
                         builder.crypto_config(client_config.clone());
-                        builder.build(addr, dns_name.clone())
+                        builder.build(
+                            config.server.item,
+                            config.dns_name.as_ref().unwrap().clone().item,
+                        )
                     }),
                     _ => unreachable!(),
                 }
             }
             proto => {
                 return Err(LabeledError::new("unknown protocol")
-                    .with_label(format!("Unknown protocol: {}", proto), call.head))
+                    .with_label(format!("Unknown protocol: {}", proto), config.protocol.span))
             }
         };
 
