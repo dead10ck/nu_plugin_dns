@@ -1132,7 +1132,7 @@ impl TryFrom<Value> for Protocol {
     }
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub enum DnssecMode {
     None,
     Strict,

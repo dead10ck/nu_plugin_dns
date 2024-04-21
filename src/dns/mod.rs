@@ -76,7 +76,7 @@ impl Dns {
         LabeledError,
     > {
         let (client, bg) = DnsClient::new(config).await?;
-        tracing::debug!(client.addr = ?config.server, client.protocol = ?config.protocol);
+        tracing::info!(client.addr = ?config.server, client.protocol = ?config.protocol);
         Ok((client, bg))
     }
 
@@ -111,7 +111,7 @@ impl DnsQuery {
     async fn run_impl(
         &self,
         plugin: &Dns,
-        _engine: &EngineInterface,
+        engine: &EngineInterface,
         call: &EvaluatedCall,
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
@@ -120,9 +120,7 @@ impl DnsQuery {
             .with(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        // [TODO]
-        // let config = engine.get_plugin_config()?.try_into()?;
-        let config = Config::try_from(call)?;
+        let config = Config::from_nu(engine.get_plugin_config()?, call)?;
         let arg_inputs: Value = call.nth(0).unwrap_or(Value::nothing(call.head));
 
         let input: PipelineData = match input {
