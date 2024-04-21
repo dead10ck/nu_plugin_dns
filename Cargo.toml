@@ -26,19 +26,19 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.30"
-nu-plugin = "0.92.0"
-nu-protocol = "0.92.0"
+nu-plugin = "0.92.2"
+nu-protocol = "0.92.2"
 
 tokio = "1.37.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
-rustls = "0.21.10"
-webpki-roots = "0.25.3"
+rustls = "0.21.11"
+webpki-roots = "0.25.4"
 
 [dependencies.hickory-resolver]
-version = "0.24.0"
+version = "0.24.1"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
@@ -48,7 +48,7 @@ features = [
 ]
 
 [dependencies.hickory-proto]
-version = "0.24.0"
+version = "0.24.1"
 features = [
   "dnssec-ring",
   "backtrace",
@@ -59,7 +59,7 @@ features = [
 ]
 
 [dependencies.hickory-client]
-version = "0.24.0"
+version = "0.24.1"
 features = [
   "dnssec-ring",
   "backtrace",
