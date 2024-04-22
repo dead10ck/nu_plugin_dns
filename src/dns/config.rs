@@ -1,6 +1,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
+    time::Duration,
 };
 
 use hickory_proto::rr::{DNSClass, RecordType};
@@ -26,6 +27,9 @@ pub struct Config {
     pub code: Spanned<bool>,
     pub dnssec_mode: Spanned<DnssecMode>,
     pub dns_name: Option<Spanned<String>>,
+
+    pub tasks: Spanned<usize>,
+    pub timeout: Spanned<Duration>,
 }
 
 impl TryFrom<Value> for Config {
@@ -221,6 +225,44 @@ impl Config {
             None => spanned!(serde::DnssecMode::Opportunistic, Span::unknown()),
         };
 
+        let tasks = match get_value(constants::flags::TASKS) {
+            Some(val @ Value::Int { .. }) => {
+                let span = val.span();
+                spanned!(
+                    val.as_int()?
+                        .try_into()
+                        .map_err(|err| LabeledError::new("invalid input")
+                            .with_label(format!("should be positive int: {err}"), val.span()))?,
+                    span
+                )
+            }
+            None => spanned!(constants::config::default::TASKS, Span::unknown()),
+
+            Some(val) => {
+                return Err(LabeledError::new("should be int")
+                    .with_label("number of tasks should be an int", val.span()))
+            }
+        };
+
+        let timeout = match get_value(constants::flags::TIMEOUT) {
+            Some(val @ Value::Duration { .. }) => {
+                let span = val.span();
+                spanned!(
+                    Duration::from_nanos(val.as_duration()?.try_into().map_err(|err| {
+                        LabeledError::new("invalid duration")
+                            .with_label(format!("should be positive duration: {err}"), val.span())
+                    })?),
+                    span
+                )
+            }
+            None => spanned!(constants::config::default::TIMEOUT, Span::unknown()),
+
+            Some(val) => {
+                return Err(LabeledError::new("should be duration")
+                    .with_label("timeout should be a positive duration", val.span()))
+            }
+        };
+
         Ok(Self {
             protocol,
             server: addr,
@@ -229,6 +271,8 @@ impl Config {
             class,
             dnssec_mode,
             dns_name,
+            tasks,
+            timeout,
         })
     }
 }

@@ -84,6 +84,18 @@ impl PluginCommand for DnsQuery {
                 "DNS name of the TLS certificate in use by the nameserver (for TLS and HTTPS only)",
                 Some('n'),
             )
+            .named(
+                constants::flags::TASKS,
+                SyntaxShape::Int,
+                format!("Number of concurrent tasks to execute queries. Default: {}", constants::config::default::TASKS),
+                Some('j'),
+            )
+            .named(
+                constants::flags::TIMEOUT,
+                SyntaxShape::Duration,
+                format!("How long a request can take before timing out. Be aware the concurrency level can affect this. Default: {}sec", constants::config::default::TIMEOUT.as_secs()),
+                None,
+            )
     }
 
     fn examples(&self) -> Vec<nu_protocol::Example> {
@@ -105,23 +117,22 @@ impl PluginCommand for DnsQuery {
             },
             Example {
                 example: "dns query --type [5, 15] -c google.com",
-                description: "specify query types by numeric ID, and get numeric IDs in output"
-                    ,
+                description: "specify query types by numeric ID, and get numeric IDs in output",
                 result: None,
             },
             Example {
                 example: "'google.com' | dns query",
-                description: "pipe nameommand",
+                description: "pipe name to command",
                 result: None,
             },
             Example {
                 example: "['google.com', 'amazon.com'] | dns query",
-                description: "pipe lists of namesommand",
+                description: "pipe lists of names to command",
                 result: None,
             },
             Example {
                 example: "[{{name: 'google.com', type: 'A'}}, {{name: 'amazon.com', type: 'A'}}] | dns query",
-                description: "pipe table of queriesommand (ignores --type flag)",
+                description: "pipe table of queries to command (ignores --type flag)",
                 result: None,
             },
         ]

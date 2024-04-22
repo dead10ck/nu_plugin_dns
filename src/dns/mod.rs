@@ -139,7 +139,15 @@ impl DnsQuery {
             }
         };
 
-        let client = plugin.dns_client(&config).await?;
+        let client = tokio::time::timeout(config.timeout.item, plugin.dns_client(&config))
+            .await
+            .map_err(|_| {
+                LabeledError::new("timed out").with_label(
+                    format!("connecting to {} timed out", config.server.item),
+                    config.server.span,
+                )
+            })??;
+
         let config = Arc::new(config);
 
         match input {
@@ -167,8 +175,8 @@ impl DnsQuery {
             PipelineData::ListStream(mut stream, _) => {
                 tracing::debug!(phase = "input", data.kind = "stream");
 
-                let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(16);
-                let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(16);
+                let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(config.tasks.item);
+                let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(config.tasks.item);
 
                 plugin.spawn({
                     let client = client.clone();
@@ -290,9 +298,19 @@ impl DnsQuery {
                         tracing::debug!(query.phase = "start");
                     }
 
-                    client
-                        .query(parts.name, parts.query_class, parts.query_type)
+                    let request = tokio::time::timeout(
+                        config.timeout.item,
+                        client.query(parts.name, parts.query_class, parts.query_type),
+                    );
+
+                    request
                         .await
+                        .map_err(|_| {
+                            LabeledError::new("timed out").with_label(
+                                format!("request to {} timed out", config.server.item),
+                                config.server.span,
+                            )
+                        })?
                         .map_err(|err| {
                             LabeledError::new("DNS error")
                                 .with_label(format!("Error in DNS response: {:?}", err), in_span)

@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use futures_util::{future, Stream, StreamExt};
 use hickory_client::client::{AsyncClient, AsyncDnssecClient};
@@ -77,13 +77,29 @@ impl DnsClient {
 
         let (async_client, dnssec_client) = match config.protocol.item {
             Protocol::Udp => {
-                make_clients!(UdpClientStream::<UdpSocket>::new(config.server.item))
+                make_clients!(UdpClientStream::<UdpSocket>::with_timeout(
+                    config.server.item,
+                    // can't set a timeout on HTTPS client, so work
+                    // around by setting the client internal timeout
+                    // very long for all the others so we can set
+                    // our own instead
+                    Duration::from_secs(60 * 60 * 24 * 365)
+                ))
             }
             Protocol::Tcp => {
                 make_clients!({
                     let (stream, sender) =
                         TcpClientStream::<TokioTcpConnect>::new(config.server.item);
-                    DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None)
+                    DnsMultiplexer::<_, NoopMessageFinalizer>::with_timeout(
+                        stream,
+                        sender,
+                        // can't set a timeout on HTTPS client, so work
+                        // around by setting the client internal timeout
+                        // very long for all the others so we can set
+                        // our own instead
+                        Duration::from_secs(60 * 60 * 24 * 365),
+                        None,
+                    )
                 })
             }
             proto @ (Protocol::Https | Protocol::Tls | Protocol::Quic) => {
@@ -113,7 +129,16 @@ impl DnsClient {
                                     config.dns_name.as_ref().unwrap().clone().item,
                                     client_config.clone(),
                                 );
-                            DnsMultiplexer::<_, NoopMessageFinalizer>::new(stream, sender, None)
+                            DnsMultiplexer::<_, NoopMessageFinalizer>::with_timeout(
+                                stream,
+                                sender,
+                                // can't set a timeout on HTTPS client, so work
+                                // around by setting the client internal timeout
+                                // very long for all the others so we can set
+                                // our own instead
+                                Duration::from_secs(60 * 60 * 24 * 365),
+                                None,
+                            )
                         })
                     }
                     Protocol::Https => {

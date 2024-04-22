@@ -11,10 +11,19 @@ pub mod flags {
     pub const CLASS: &str = "class";
     pub const DNSSEC: &str = "dnssec";
     pub const CODE: &str = "code";
+    pub const TASKS: &str = "tasks";
+    pub const TIMEOUT: &str = "timeout";
 }
 
 pub mod config {
     use hickory_resolver::config::Protocol;
+
+    pub mod default {
+        use std::time::Duration;
+
+        pub const TASKS: usize = 8;
+        pub const TIMEOUT: Duration = Duration::from_secs(5);
+    }
 
     pub fn default_port(protocol: Protocol) -> u16 {
         match protocol {
