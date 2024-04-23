@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use futures_util::{stream::FuturesUnordered, Future, StreamExt};
+use futures_util::{
+    stream::{FuturesOrdered, FuturesUnordered},
+    Future, StreamExt,
+};
 use hickory_client::client::ClientHandle;
 
 use nu_plugin::{EngineInterface, EvaluatedCall};
@@ -182,19 +185,33 @@ impl DnsQuery {
                     let client = client.clone();
 
                     async move {
-                        let mut queue = FuturesUnordered::new();
+                        let mut buf = Vec::with_capacity(config.tasks.item);
+                        let mut result_queue = FuturesOrdered::new();
 
-                        while let Some(val) = Box::pin(request_rx.recv()).await {
-                            tracing::trace!(query = ?val, query.phase = "received");
+                        while request_rx.recv_many(&mut buf, config.tasks.item).await > 0 {
+                            for val in buf.drain(..) {
+                                tracing::trace!(query = ?val, query.phase = "received");
 
-                            let config = config.clone();
-                            let client = client.clone();
-                            let resp_tx = resp_tx.clone();
+                                let config = config.clone();
+                                let client = client.clone();
 
-                            let handle = tokio::spawn(async move {
-                                let resps = Self::query(config, val, client).await;
+                                let handle =
+                                    tokio::spawn(
+                                        async move { Self::query(config, val, client).await },
+                                    );
 
-                                for resp in resps.into_iter() {
+                                result_queue.push_back(handle);
+                            }
+
+                            while let Some(query_result) = result_queue.next().await {
+                                let query_result = query_result.map_err(|err| {
+                                    LabeledError::new("internal error").with_label(
+                                        format!("task panicked: {}", err),
+                                        Span::unknown(),
+                                    )
+                                })?;
+
+                                for resp in query_result.into_iter() {
                                     resp_tx.send(resp).await.map_err(|send_err| {
                                         LabeledError::new("internal error").with_label(
                                             format!(
@@ -205,18 +222,10 @@ impl DnsQuery {
                                         )
                                     })?;
                                 }
-
-                                Ok(())
-                            });
-
-                            queue.push(handle);
-
-                            if queue.len() == 100 {
-                                Self::drain_queue(&mut queue).await?;
                             }
                         }
 
-                        Self::drain_queue(&mut queue).await
+                        Ok(())
                     }
                 });
 
@@ -253,22 +262,6 @@ impl DnsQuery {
                 data.span().unwrap_or(Span::unknown()),
             )),
         }
-    }
-
-    async fn drain_queue(
-        queue: &mut FuturesUnordered<DnsQueryJoinHandle>,
-    ) -> Result<(), LabeledError> {
-        for send in queue.iter_mut() {
-            send.await.map_err(|join_err| {
-                LabeledError::new("internal error")
-                    .with_label(format!("task panicked: {}", join_err), Span::unknown())
-            })??;
-        }
-
-        tracing::debug!(queue.phase = "drain");
-
-        queue.clear();
-        Ok(())
     }
 
     async fn query(config: Arc<Config>, input: Value, client: DnsClient) -> DnsQueryResult {
