@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use futures_util::{
     stream::{FuturesOrdered, FuturesUnordered},
@@ -178,32 +181,49 @@ impl DnsQuery {
             PipelineData::ListStream(mut stream, _) => {
                 tracing::debug!(phase = "input", data.kind = "stream");
 
+                let ctrlc = stream.ctrlc.clone();
                 let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(config.tasks.item);
 
                 plugin.spawn({
                     let client = client.clone();
+                    let ctrlc = ctrlc.clone();
 
                     async move {
                         let mut buf = Vec::with_capacity(config.tasks.item);
                         let mut result_queue = FuturesOrdered::new();
 
                         while request_rx.recv_many(&mut buf, config.tasks.item).await > 0 {
+                            tracing::trace!(
+                                query.phase = "batch received",
+                                query.batchsize = buf.len()
+                            );
+
+                            check_ctrlc(ctrlc.clone())?;
+
                             for val in buf.drain(..) {
+                                let ctrlc = ctrlc.clone();
                                 tracing::trace!(query = ?val, query.phase = "received");
 
                                 let config = config.clone();
                                 let client = client.clone();
 
-                                let handle =
-                                    tokio::spawn(
-                                        async move { Self::query(config, val, client).await },
-                                    );
+                                let handle = tokio::spawn(async move {
+                                    if let Err(err) = check_ctrlc(ctrlc) {
+                                        return vec![Err(err)]
+                                            .into_iter()
+                                            .collect::<DnsQueryResult>();
+                                    };
+
+                                    Self::query(config, val, client).await
+                                });
 
                                 result_queue.push_back(handle);
                             }
 
                             while let Some(query_result) = result_queue.next().await {
+                                check_ctrlc(ctrlc.clone())?;
+
                                 let query_result = query_result.map_err(|err| {
                                     LabeledError::new("internal error").with_label(
                                         format!("task panicked: {}", err),
@@ -230,18 +250,18 @@ impl DnsQuery {
                 });
 
                 plugin.spawn_blocking(move || {
-                    stream
-                        .stream
-                        .try_for_each(|val| {
-                            tracing::trace!(query = ?val, query.phase = "send");
-                            request_tx.blocking_send(val)
-                        })
-                        .map_err(|send_err| {
+                    stream.stream.try_for_each(|val| {
+                        let ctrlc = ctrlc.clone();
+                        tracing::trace!(query = ?val, query.phase = "send");
+                        check_ctrlc(ctrlc)?;
+
+                        request_tx.blocking_send(val).map_err(|send_err| {
                             LabeledError::new("internal error").with_label(
                                 format!("failed to send dns query result: {}", send_err),
                                 Span::unknown(),
                             )
                         })
+                    })
                 });
 
                 Ok(PipelineData::ListStream(
@@ -251,8 +271,8 @@ impl DnsQuery {
                                 resp.unwrap_or_else(|err| Value::error(err.into(), Span::unknown()))
                             })
                         })
-                        .inspect(|val| tracing::debug!(phase = "return", ?val)),
-                        stream.ctrlc,
+                        .inspect(|val| log_response_val(val, "return")),
+                        stream.ctrlc.clone(),
                     ),
                     None,
                 ))
@@ -315,12 +335,40 @@ impl DnsQuery {
                         .inspect_err(
                             |err| tracing::debug!(query.phase = "finish", query.error = ?err),
                         )
-                        .inspect(
-                            |resp| tracing::debug!(query.phase = "finish", query.response = ?resp),
-                        )
+                        .inspect(|resp| {
+                            log_response_val(resp, "finish");
+                        })
                 }
             })
             .collect::<FuturesUnordered<_>>()
             .await
     }
+}
+
+fn log_response_val(resp: &Value, phase: &str) {
+    if tracing::enabled!(tracing::Level::TRACE) {
+        tracing::trace!(query.phase = phase, query.response = ?resp)
+    } else {
+        let question = resp.get_data_by_key("question");
+        let answer = resp.get_data_by_key("answer");
+        tracing::debug!(
+            query.phase = phase,
+            query.response.question = ?question,
+            query.response.answer = ?answer
+        );
+    }
+}
+
+fn check_ctrlc(ctrlc: Option<Arc<AtomicBool>>) -> Result<(), LabeledError> {
+    let canceled = ctrlc
+        .as_ref()
+        .is_some_and(|ctrlc| ctrlc.load(Ordering::Relaxed));
+
+    tracing::trace!("ctrlc: {canceled}");
+
+    if canceled {
+        return Err(LabeledError::new("internal error").with_label("cancelled", Span::unknown()));
+    }
+
+    Ok(())
 }
