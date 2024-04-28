@@ -12,7 +12,7 @@ use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
 use nu_protocol::{
     Example, LabeledError, ListStream, PipelineData, Signature, Span, SyntaxShape, Type, Value,
 };
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinSet;
 use tracing_subscriber::prelude::*;
 
 use crate::{
@@ -25,7 +25,6 @@ use crate::{
     Dns,
 };
 
-pub type DnsQueryJoinHandle = JoinHandle<Result<(), LabeledError>>;
 pub type DnsQueryResult = FuturesUnordered<Result<Value, LabeledError>>;
 pub type DnsQueryPluginClient = Arc<
     tokio::sync::RwLock<
@@ -111,103 +110,107 @@ impl DnsQuery {
                 let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel(config.tasks.item);
 
-                plugin.spawn({
-                    tracing::trace!(task.query_coordinator.phase = "start");
+                plugin
+                    .spawn({
+                        tracing::trace!(task.query_coordinator.phase = "start");
 
-                    let client = client.clone();
-                    let ctrlc = ctrlc.clone();
+                        let client = client.clone();
+                        let ctrlc = ctrlc.clone();
 
-                    async move {
-                        let mut buf = Vec::with_capacity(config.tasks.item);
-                        let mut result_queue = FuturesOrdered::new();
+                        async move {
+                            let mut buf = Vec::with_capacity(config.tasks.item);
+                            let mut result_queue = FuturesOrdered::new();
 
-                        while request_rx.recv_many(&mut buf, config.tasks.item).await > 0 {
-                            tracing::trace!(
-                                query.phase = "batch received",
-                                query.batchsize = buf.len()
-                            );
+                            while request_rx.recv_many(&mut buf, config.tasks.item).await > 0 {
+                                tracing::trace!(
+                                    query.phase = "batch received",
+                                    query.batchsize = buf.len()
+                                );
 
-                            check_ctrlc(ctrlc.clone())?;
-
-                            for val in buf.drain(..) {
-                                let ctrlc = ctrlc.clone();
-                                tracing::trace!(query = ?val, query.phase = "received");
-
-                                let config = config.clone();
-                                let client = client.clone();
-
-                                let handle = tokio::spawn(async move {
-                                    tracing::trace!(task.query_exec.phase = "start");
-
-                                    if let Err(err) = check_ctrlc(ctrlc) {
-                                        return vec![Err(err)]
-                                            .into_iter()
-                                            .collect::<DnsQueryResult>();
-                                    };
-
-                                    let result = Self::query(config, val, client).await;
-
-                                    tracing::trace!(
-                                        task.query_exec.phase = "end",
-                                        task.query_exec.result = ?result
-                                    );
-
-                                    result
-                                });
-
-                                result_queue.push_back(handle);
-                            }
-
-                            while let Some(query_result) = result_queue.next().await {
                                 check_ctrlc(ctrlc.clone())?;
 
-                                let query_result = query_result.map_err(|err| {
-                                    LabeledError::new("internal error").with_label(
-                                        format!("task panicked: {}", err),
-                                        Span::unknown(),
-                                    )
-                                })?;
+                                for val in buf.drain(..) {
+                                    let ctrlc = ctrlc.clone();
+                                    tracing::trace!(query = ?val, query.phase = "received");
 
-                                for resp in query_result.into_iter() {
-                                    resp_tx.send(resp).await.map_err(|send_err| {
+                                    let config = config.clone();
+                                    let client = client.clone();
+
+                                    let handle = tokio::spawn(async move {
+                                        tracing::trace!(task.query_exec.phase = "start");
+
+                                        if let Err(err) = check_ctrlc(ctrlc) {
+                                            return vec![Err(err)]
+                                                .into_iter()
+                                                .collect::<DnsQueryResult>();
+                                        };
+
+                                        let result = Self::query(config, val, client).await;
+
+                                        tracing::trace!(
+                                            task.query_exec.phase = "end",
+                                            task.query_exec.result = ?result
+                                        );
+
+                                        result
+                                    });
+
+                                    result_queue.push_back(handle);
+                                }
+
+                                while let Some(query_result) = result_queue.next().await {
+                                    check_ctrlc(ctrlc.clone())?;
+
+                                    let query_result = query_result.map_err(|err| {
                                         LabeledError::new("internal error").with_label(
-                                            format!(
-                                                "failed to send dns query result: {}",
-                                                send_err
-                                            ),
+                                            format!("task panicked: {}", err),
                                             Span::unknown(),
                                         )
                                     })?;
+
+                                    for resp in query_result.into_iter() {
+                                        resp_tx.send(resp).await.map_err(|send_err| {
+                                            LabeledError::new("internal error").with_label(
+                                                format!(
+                                                    "failed to send dns query result: {}",
+                                                    send_err
+                                                ),
+                                                Span::unknown(),
+                                            )
+                                        })?;
+                                    }
                                 }
                             }
+
+                            tracing::trace!(task.query_coordinator.phase = "exit");
+
+                            Ok(())
                         }
+                    })
+                    .await;
 
-                        tracing::trace!(task.query_coordinator.phase = "exit");
+                plugin
+                    .spawn_blocking(move || {
+                        tracing::trace!(task.sender.phase = "start");
 
-                        Ok(())
-                    }
-                });
+                        let result = stream.stream.try_for_each(|val| {
+                            let ctrlc = ctrlc.clone();
+                            tracing::trace!(query = ?val, query.phase = "send");
+                            check_ctrlc(ctrlc)?;
 
-                plugin.spawn_blocking(move || {
-                    tracing::trace!(task.sender.phase = "start");
+                            request_tx.blocking_send(val).map_err(|send_err| {
+                                LabeledError::new("internal error").with_label(
+                                    format!("failed to send dns query result: {}", send_err),
+                                    Span::unknown(),
+                                )
+                            })
+                        });
 
-                    let result = stream.stream.try_for_each(|val| {
-                        let ctrlc = ctrlc.clone();
-                        tracing::trace!(query = ?val, query.phase = "send");
-                        check_ctrlc(ctrlc)?;
+                        tracing::trace!(task.sender.phase = "exit", task.sender.result = ?result);
 
-                        request_tx.blocking_send(val).map_err(|send_err| {
-                            LabeledError::new("internal error").with_label(
-                                format!("failed to send dns query result: {}", send_err),
-                                Span::unknown(),
-                            )
-                        })
-                    });
-
-                    tracing::trace!(task.sender.phase = "exit", task.sender.result = ?result);
-
-                    result
-                });
+                        result
+                    })
+                    .await;
 
                 Ok(PipelineData::ListStream(
                     ListStream::from_stream(

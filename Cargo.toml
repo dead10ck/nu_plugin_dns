@@ -36,6 +36,7 @@ tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 # rustls and webpki must keep in lockstep with hickory
 rustls = "0.21.11"
 webpki-roots = "0.25.4"
+tokio-util = { version = "0.7.10", features = ["rt"] }
 
 [dependencies.hickory-resolver]
 version = "0.24.1"

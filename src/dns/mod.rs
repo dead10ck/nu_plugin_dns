@@ -3,12 +3,9 @@ use std::sync::Arc;
 use futures_util::Future;
 use nu_protocol::LabeledError;
 use tokio::task::JoinSet;
+use tokio_util::task::TaskTracker;
 
-use self::{
-    client::DnsClient,
-    commands::query::{DnsQueryJoinHandle, DnsQueryPluginClient},
-    config::Config,
-};
+use self::{client::DnsClient, commands::query::DnsQueryPluginClient, config::Config};
 
 mod client;
 mod commands;
@@ -20,7 +17,7 @@ mod util;
 
 pub struct Dns {
     runtime: tokio::runtime::Runtime,
-    tasks: Arc<std::sync::Mutex<Vec<DnsQueryJoinHandle>>>,
+    tasks: TaskTracker,
     client: DnsQueryPluginClient,
 }
 
@@ -28,7 +25,7 @@ impl Dns {
     pub fn new() -> Self {
         Self {
             runtime: tokio::runtime::Runtime::new().unwrap(),
-            tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            tasks: TaskTracker::new(),
             client: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
@@ -68,21 +65,23 @@ impl Dns {
         Ok((client, bg))
     }
 
-    pub fn spawn<F>(&self, future: F)
+    pub async fn spawn<F>(&self, future: F)
     where
         F: Future<Output = Result<(), LabeledError>> + Send + 'static,
     {
-        self.tasks.lock().unwrap().push(self.runtime.spawn(future));
+        self.tasks.spawn(future);
     }
 
-    pub fn spawn_blocking<F>(&self, future: F)
+    pub async fn spawn_blocking<F>(&self, future: F)
     where
         F: FnOnce() -> Result<(), LabeledError> + Send + 'static,
     {
-        self.tasks
-            .lock()
-            .unwrap()
-            .push(self.runtime.spawn_blocking(future));
+        self.tasks.spawn_blocking(future);
+    }
+
+    pub async fn close(&self) {
+        self.tasks.close();
+        self.tasks.wait().await;
     }
 }
 
