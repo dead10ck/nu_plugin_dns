@@ -26,8 +26,8 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.30"
-nu-plugin = "0.92.2"
-nu-protocol = "0.92.2"
+nu-plugin = "0.93.0"
+nu-protocol = "0.93.0"
 
 tokio = "1.37.0"
 tracing = "0.1"
