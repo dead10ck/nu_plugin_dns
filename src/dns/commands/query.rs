@@ -10,7 +10,7 @@ use futures_util::{
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
 use nu_protocol::{
-    Example, LabeledError, ListStream, PipelineData, Signature, Span, SyntaxShape, Type, Value,
+    Example, LabeledError, ListStream, PipelineData, Signature, Span, SyntaxShape, Value,
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing_subscriber::prelude::*;
@@ -366,21 +366,21 @@ impl PluginCommand for DnsQuery {
 
     fn signature(&self) -> nu_protocol::Signature {
         Signature::build(self.name())
-            .input_output_types(vec![
-                (Type::String, Type::Any),
-                (Type::List(Type::Any.into()), Type::Any),
-            ])
             .rest(
                 constants::flags::NAME,
-                SyntaxShape::OneOf(vec![
-                    SyntaxShape::String,
-                    SyntaxShape::List(Box::new(SyntaxShape::OneOf(vec![
-                        SyntaxShape::String,
-                        SyntaxShape::Binary,
-                        SyntaxShape::Int,
-                        SyntaxShape::Boolean,
-                    ]))),
-                ]),
+
+                // [NOTE] this does not work
+                // SyntaxShape::OneOf(vec![
+                //     SyntaxShape::String,
+                //     SyntaxShape::List(Box::new(SyntaxShape::OneOf(vec![
+                //         SyntaxShape::String,
+                //         SyntaxShape::Binary,
+                //         SyntaxShape::Int,
+                //         SyntaxShape::Boolean,
+                //     ]))),
+                // ]),
+                SyntaxShape::Any,
+
                 "DNS record name",
             )
             .named(

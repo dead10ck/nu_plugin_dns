@@ -355,8 +355,10 @@ impl Query {
 
                 Ok(queries)
             }
-            val => Err(LabeledError::new("invalid input type")
-                .with_label("invalid input type", val.span())),
+            val => Err(LabeledError::new("invalid input type").with_label(
+                format!("could not convert input to a DNS record name: {:?}", val),
+                val.span(),
+            )),
         }
     }
 }
