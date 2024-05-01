@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures_util::Future;
 use nu_protocol::LabeledError;
 use tokio::task::JoinSet;
-use tokio_util::task::TaskTracker;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use self::{client::DnsClient, commands::query::DnsQueryPluginClient, config::Config};
 
@@ -18,6 +18,7 @@ mod util;
 pub struct Dns {
     runtime: tokio::runtime::Runtime,
     tasks: TaskTracker,
+    cancel: CancellationToken,
     client: DnsQueryPluginClient,
 }
 
@@ -26,6 +27,7 @@ impl Dns {
         Self {
             runtime: tokio::runtime::Runtime::new().unwrap(),
             tasks: TaskTracker::new(),
+            cancel: CancellationToken::new(),
             client: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
@@ -65,7 +67,7 @@ impl Dns {
         Ok((client, bg))
     }
 
-    pub async fn spawn<F>(&self, future: F)
+    pub fn spawn<F>(&self, future: F)
     where
         F: Future<Output = Result<(), LabeledError>> + Send + 'static,
     {

@@ -1,11 +1,15 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
 use futures_util::{
+    select,
     stream::{FuturesOrdered, FuturesUnordered},
-    StreamExt,
+    FutureExt, StreamExt,
 };
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
@@ -13,6 +17,7 @@ use nu_protocol::{
     Example, LabeledError, ListStream, PipelineData, Signature, Span, SyntaxShape, Value,
 };
 use tokio::{sync::mpsc, task::JoinSet};
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
 
 use crate::{
@@ -110,20 +115,20 @@ impl DnsQuery {
                 let (request_tx, request_rx) = mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = mpsc::channel(config.tasks.item);
 
-                plugin
-                    .spawn(coordinate_queries(
-                        config,
-                        client,
-                        request_rx,
-                        resp_tx,
-                        ctrlc.clone(),
-                    ))
-                    .await;
+                plugin.spawn(watch_sigterm(ctrlc.clone(), plugin.cancel.clone()));
+
+                plugin.spawn(coordinate_queries(
+                    config,
+                    client,
+                    request_rx,
+                    resp_tx,
+                    plugin.cancel.clone(),
+                ));
 
                 plugin
                     .spawn_blocking({
-                        let ctrlc = ctrlc.clone();
-                        move || stream_requests(stream, ctrlc.clone(), request_tx)
+                        let cancel = plugin.cancel.clone();
+                        move || stream_requests(stream, cancel, request_tx)
                     })
                     .await;
 
@@ -216,16 +221,35 @@ impl DnsQuery {
     }
 }
 
+async fn watch_sigterm(
+    ctrlc: Option<Arc<AtomicBool>>,
+    cancel: CancellationToken,
+) -> Result<(), LabeledError> {
+    while !ctrlc
+        .as_ref()
+        .map(|ctrlc| ctrlc.load(Ordering::Relaxed))
+        .unwrap_or(false)
+    {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    cancel.cancel();
+    Ok(())
+}
+
 fn stream_requests(
     mut stream: ListStream,
-    ctrlc: Option<Arc<AtomicBool>>,
+    cancel: CancellationToken,
     request_tx: mpsc::Sender<Value>,
 ) -> Result<(), LabeledError> {
     tracing::trace!(task.sender.phase = "start");
 
     let result = stream.stream.try_for_each(|val| {
         tracing::trace!(query = ?val, query.phase = "send");
-        check_ctrlc(&ctrlc)?;
+
+        if cancel.is_cancelled() {
+            return Err(LabeledError::new("canceled"));
+        }
 
         request_tx.blocking_send(val).map_err(|send_err| {
             LabeledError::new("internal error").with_label(
@@ -245,7 +269,7 @@ async fn coordinate_queries(
     client: DnsClient,
     mut request_rx: mpsc::Receiver<Value>,
     resp_tx: mpsc::Sender<Result<Value, LabeledError>>,
-    ctrlc: Option<Arc<AtomicBool>>,
+    cancel: CancellationToken,
 ) -> Result<(), LabeledError> {
     tracing::trace!(task.query_coordinator.phase = "start");
     let mut buf = Vec::with_capacity(config.tasks.item);
@@ -254,23 +278,23 @@ async fn coordinate_queries(
     while request_rx.recv_many(&mut buf, config.tasks.item).await > 0 {
         tracing::trace!(query.phase = "batch received", query.batchsize = buf.len());
 
-        check_ctrlc(&ctrlc)?;
-
         for val in buf.drain(..) {
-            let ctrlc = ctrlc.clone();
             tracing::trace!(query = ?val, query.phase = "received");
 
             let config = config.clone();
             let client = client.clone();
+            let cancel = cancel.clone();
 
             let handle = tokio::spawn(async move {
                 tracing::trace!(task.query_exec.phase = "start");
 
-                if let Err(err) = check_ctrlc(&ctrlc) {
-                    return vec![Err(err)].into_iter().collect::<DnsQueryResult>();
-                };
+                let mut query = Box::pin(DnsQuery::query(config, val, client).fuse());
+                let mut cancelled = Box::pin(cancel.cancelled().fuse());
 
-                let result = DnsQuery::query(config, val, client).await;
+                let result = select! {
+                    resp = query => resp,
+                    _ = cancelled => vec![Err(LabeledError::new("canceled"))].into_iter().collect(),
+                };
 
                 tracing::trace!(
                     task.query_exec.phase = "end",
@@ -284,8 +308,6 @@ async fn coordinate_queries(
         }
 
         while let Some(query_result) = result_queue.next().await {
-            check_ctrlc(&ctrlc)?;
-
             let query_result = query_result.map_err(|err| {
                 LabeledError::new("internal error")
                     .with_label(format!("task panicked: {}", err), Span::unknown())
@@ -319,20 +341,6 @@ pub(crate) fn log_response_val(resp: &Value, phase: &str) {
             query.response.answer = ?answer
         );
     }
-}
-
-pub(crate) fn check_ctrlc(ctrlc: &Option<Arc<AtomicBool>>) -> Result<(), LabeledError> {
-    let canceled = ctrlc
-        .as_ref()
-        .is_some_and(|ctrlc| ctrlc.load(Ordering::Relaxed));
-
-    tracing::trace!("ctrlc: {canceled}");
-
-    if canceled {
-        return Err(LabeledError::new("internal error").with_label("cancelled", Span::unknown()));
-    }
-
-    Ok(())
 }
 
 impl Plugin for Dns {
