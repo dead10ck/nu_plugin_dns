@@ -469,6 +469,11 @@ impl PluginCommand for DnsQuery {
                 result: None,
             },
             Example {
+                example: "[ $\"ding(char -u '07')-ds\", \"metric\", \"gstatic\", \"com\" ] | each { into binary } | collect { $in } | dns query",
+                description: "query record name that has labels with non-renderable bytes",
+                result: None,
+            },
+            Example {
                 example: "[{{name: 'google.com', type: 'A'}}, {{name: 'amazon.com', type: 'A'}}] | dns query",
                 description: "pipe table of queries to command (ignores --type flag)",
                 result: None,
