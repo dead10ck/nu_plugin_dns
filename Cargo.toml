@@ -1,6 +1,6 @@
 [package]
 name = "nu_plugin_dns"
-version = "2.0.1-alpha.1"
+version = "3.0.0"
 authors = ["Skyler Hawthorne <skyler@dead10ck.dev>"]
 description = "A DNS utility for nushell"
 
