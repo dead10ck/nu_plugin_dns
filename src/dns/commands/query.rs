@@ -425,7 +425,7 @@ impl PluginCommand for DnsQuery {
             .named(
                 constants::flags::TASKS,
                 SyntaxShape::Int,
-                format!("Number of concurrent tasks to execute queries. Default: {}", constants::config::default::TASKS),
+                format!("Number of concurrent tasks to execute queries. Please be mindful not to overwhelm your nameserver! Default: {}", constants::config::default::TASKS),
                 Some('j'),
             )
             .named(
