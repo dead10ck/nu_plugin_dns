@@ -111,7 +111,8 @@ impl DnsQuery {
             PipelineData::ListStream(stream, _) => {
                 tracing::debug!(phase = "input", data.kind = "stream");
 
-                let ctrlc = stream.ctrlc.clone();
+                let span = stream.span();
+                let ctrlc = Some(Arc::new(AtomicBool::new(false)));
                 let (request_tx, request_rx) = mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = mpsc::channel(config.tasks.item);
 
@@ -133,7 +134,7 @@ impl DnsQuery {
                     .await;
 
                 Ok(PipelineData::ListStream(
-                    ListStream::from_stream(
+                    ListStream::new(
                         std::iter::from_fn(move || {
                             tokio::task::block_in_place(|| {
                                 resp_rx.blocking_recv().map(|resp| {
@@ -144,6 +145,7 @@ impl DnsQuery {
                             })
                         })
                         .inspect(|val| log_response_val(val, "return")),
+                        span,
                         ctrlc,
                     ),
                     None,
@@ -238,13 +240,13 @@ async fn watch_sigterm(
 }
 
 fn stream_requests(
-    mut stream: ListStream,
+    stream: ListStream,
     cancel: CancellationToken,
     request_tx: mpsc::Sender<Value>,
 ) -> Result<(), LabeledError> {
     tracing::trace!(task.sender.phase = "start");
 
-    let result = stream.stream.try_for_each(|val| {
+    let result = stream.into_iter().try_for_each(|val| {
         tracing::trace!(query = ?val, query.phase = "send");
 
         if cancel.is_cancelled() {
