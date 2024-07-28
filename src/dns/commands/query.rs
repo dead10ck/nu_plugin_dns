@@ -1,8 +1,5 @@
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 
@@ -14,7 +11,7 @@ use futures_util::{
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
 use nu_protocol::{
-    Example, LabeledError, ListStream, PipelineData, Signature, Span, SyntaxShape, Value,
+    Example, LabeledError, ListStream, PipelineData, Signals, Signature, Span, SyntaxShape, Value,
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -112,7 +109,7 @@ impl DnsQuery {
                 tracing::debug!(phase = "input", data.kind = "stream");
 
                 let span = stream.span();
-                let ctrlc = Some(Arc::new(AtomicBool::new(false)));
+                let ctrlc = Signals::new(Arc::new(AtomicBool::new(false)));
                 let (request_tx, request_rx) = mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = mpsc::channel(config.tasks.item);
 
@@ -223,15 +220,8 @@ impl DnsQuery {
     }
 }
 
-async fn watch_sigterm(
-    ctrlc: Option<Arc<AtomicBool>>,
-    cancel: CancellationToken,
-) -> Result<(), LabeledError> {
-    while !ctrlc
-        .as_ref()
-        .map(|ctrlc| ctrlc.load(Ordering::Relaxed))
-        .unwrap_or(false)
-    {
+async fn watch_sigterm(ctrlc: Signals, cancel: CancellationToken) -> Result<(), LabeledError> {
+    while !ctrlc.interrupted() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
@@ -348,6 +338,10 @@ pub(crate) fn log_response_val(resp: &Value, phase: &str) {
 impl Plugin for Dns {
     fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
         vec![Box::new(DnsQuery)]
+    }
+
+    fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").into()
     }
 }
 
