@@ -1291,7 +1291,7 @@ dependencies = [
 
 [[package]]
 name = "nu_plugin_dns"
-version = "3.0.4"
+version = "3.0.5-alpha.1"
 dependencies = [
  "chrono",
  "futures-util",
