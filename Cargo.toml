@@ -26,17 +26,17 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.30"
-nu-plugin = "0.97.1"
-nu-protocol = "0.97.1"
+nu-plugin = "0.98.0"
+nu-protocol = "0.98.0"
 
-tokio = "1.39.3"
+tokio = "1.40.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
 rustls = "0.21.11"
 webpki-roots = "0.25.4"
-tokio-util = { version = "0.7.11", features = ["rt"] }
+tokio-util = { version = "0.7.12", features = ["rt"] }
 
 [dependencies.hickory-resolver]
 version = "0.24.1"

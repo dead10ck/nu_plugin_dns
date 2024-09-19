@@ -364,7 +364,7 @@ impl PluginCommand for DnsQuery {
         constants::commands::QUERY
     }
 
-    fn usage(&self) -> &str {
+    fn description(&self) -> &str {
         "Perform a DNS query"
     }
 
