@@ -29,14 +29,14 @@ futures-util = "0.3.31"
 nu-plugin = "0.100.0"
 nu-protocol = "0.100.0"
 
-tokio = "1.40.0"
+tokio = "1.42.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
 rustls = "0.21.11"
 webpki-roots = "0.25.4"
-tokio-util = { version = "0.7.12", features = ["rt"] }
+tokio-util = { version = "0.7.13", features = ["rt"] }
 
 [dependencies.hickory-resolver]
 version = "0.24.1"
