@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.6] - 2024-12-08
+
+* Upgrade nushell crates to 0.100.0
+
 ## [3.0.5] - 2024-10-17
 
 * Upgrade nushell crates to 0.99
