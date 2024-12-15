@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use futures_util::Future;
+use hickory_proto::runtime::TokioRuntimeProvider;
 use nu_protocol::LabeledError;
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -16,7 +17,8 @@ mod serde;
 mod util;
 
 pub struct Dns {
-    runtime: tokio::runtime::Runtime,
+    main_runtime: tokio::runtime::Runtime,
+    runtime_provider: TokioRuntimeProvider,
     tasks: TaskTracker,
     cancel: CancellationToken,
     client: DnsQueryPluginClient,
@@ -25,7 +27,8 @@ pub struct Dns {
 impl Dns {
     pub fn new() -> Self {
         Self {
-            runtime: tokio::runtime::Runtime::new().unwrap(),
+            main_runtime: tokio::runtime::Runtime::new().unwrap(),
+            runtime_provider: TokioRuntimeProvider::new(),
             tasks: TaskTracker::new(),
             cancel: CancellationToken::new(),
             client: Arc::new(tokio::sync::RwLock::new(None)),
@@ -55,14 +58,8 @@ impl Dns {
     async fn make_dns_client(
         &self,
         config: &Config,
-    ) -> Result<
-        (
-            DnsClient,
-            JoinSet<Result<(), hickory_proto::error::ProtoError>>,
-        ),
-        LabeledError,
-    > {
-        let (client, bg) = DnsClient::new(config).await?;
+    ) -> Result<(DnsClient, JoinSet<Result<(), hickory_proto::ProtoError>>), LabeledError> {
+        let (client, bg) = DnsClient::new(config, self.runtime_provider.clone()).await?;
         tracing::info!(client.addr = ?config.server, client.protocol = ?config.protocol);
         Ok((client, bg))
     }

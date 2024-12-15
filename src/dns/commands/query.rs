@@ -9,6 +9,7 @@ use futures_util::{
     FutureExt, StreamExt,
 };
 use hickory_client::client::ClientHandle;
+use hickory_proto::xfer::DnsHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
 use nu_protocol::{
     Example, LabeledError, ListStream, PipelineData, Signals, Signature, Span, SyntaxShape, Value,
@@ -28,14 +29,8 @@ use crate::{
 };
 
 pub type DnsQueryResult = FuturesUnordered<Result<Value, LabeledError>>;
-pub type DnsQueryPluginClient = Arc<
-    tokio::sync::RwLock<
-        Option<(
-            DnsClient,
-            JoinSet<Result<(), hickory_proto::error::ProtoError>>,
-        )>,
-    >,
->;
+pub type DnsQueryPluginClient =
+    Arc<tokio::sync::RwLock<Option<(DnsClient, JoinSet<Result<(), hickory_proto::ProtoError>>)>>>;
 
 #[derive(Debug)]
 pub struct DnsQuery;
@@ -155,10 +150,10 @@ impl DnsQuery {
         }
     }
 
-    pub(crate) async fn query(
+    pub(crate) async fn query<C: DnsHandle>(
         config: Arc<Config>,
         input: Value,
-        client: DnsClient,
+        client: C,
     ) -> DnsQueryResult {
         let in_span = input.span();
         let queries = match Query::try_from_value(&input, &config) {
@@ -356,7 +351,7 @@ impl PluginCommand for DnsQuery {
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
         plugin
-            .runtime
+            .main_runtime
             .block_on(self.run_impl(plugin, engine, call, input))
     }
 

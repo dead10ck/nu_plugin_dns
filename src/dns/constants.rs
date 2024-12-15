@@ -16,7 +16,7 @@ pub mod flags {
 }
 
 pub mod config {
-    use hickory_resolver::config::Protocol;
+    use hickory_proto::xfer::Protocol;
 
     pub mod default {
         use std::time::Duration;
@@ -66,6 +66,6 @@ pub mod columns {
         "additional_count",
     ];
     pub const QUERY_COLS: &[&str] = &["name", "type", "class"];
-    pub const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata"];
+    pub const RECORD_COLS: &[&str] = &["name", "type", "class", "ttl", "rdata", "proof"];
     pub const CODE_COLS: &[&str] = &["name", "code"];
 }

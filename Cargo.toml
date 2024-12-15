@@ -34,38 +34,35 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
-rustls = "0.21.11"
-webpki-roots = "0.25.4"
+rustls = "0.23.19"
+webpki-roots = "0.26.7"
 tokio-util = { version = "0.7.13", features = ["rt"] }
 
 [dependencies.hickory-resolver]
-version = "0.24.1"
+version = "0.25.0-alpha.4"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
-  "dns-over-https",
   "dns-over-https-rustls",
   "dns-over-quic",
 ]
 
 [dependencies.hickory-proto]
-version = "0.24.1"
+version = "0.25.0-alpha.4"
 features = [
   "dnssec-ring",
   "backtrace",
   "dns-over-rustls",
-  "dns-over-https",
   "dns-over-https-rustls",
   "dns-over-quic",
 ]
 
 [dependencies.hickory-client]
-version = "0.24.1"
+version = "0.25.0-alpha.4"
 features = [
   "dnssec-ring",
   "backtrace",
   "dns-over-rustls",
-  "dns-over-https",
   "dns-over-https-rustls",
   "dns-over-quic",
 ]
