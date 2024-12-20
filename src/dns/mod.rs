@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures_util::Future;
 use hickory_proto::runtime::TokioRuntimeProvider;
 use nu_protocol::LabeledError;
-use tokio::task::JoinSet;
+use tokio::task::JoinHandle;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use self::{client::DnsClient, commands::query::DnsQueryPluginClient, config::Config};
@@ -36,7 +36,12 @@ impl Dns {
     }
 
     pub async fn dns_client(&self, config: &Config) -> Result<DnsClient, LabeledError> {
-        // we could use OnceLock once get_or_try_init is stable
+        // Since the plug-in binary is left running in the background by the
+        // nushell engine between invocations, we leave a handle to it attached
+        // to the plug-in object instance so we can reuse it across invocations.
+        // If there is one already, use it.
+        //
+        // We could use OnceLock once get_or_try_init is stable
         if let Some((client, _)) = &*self.client.read().await {
             return Ok(client.clone());
         }
@@ -58,7 +63,7 @@ impl Dns {
     async fn make_dns_client(
         &self,
         config: &Config,
-    ) -> Result<(DnsClient, JoinSet<Result<(), hickory_proto::ProtoError>>), LabeledError> {
+    ) -> Result<(DnsClient, JoinHandle<Result<(), hickory_proto::ProtoError>>), LabeledError> {
         let (client, bg) = DnsClient::new(config, self.runtime_provider.clone()).await?;
         tracing::info!(client.addr = ?config.server, client.protocol = ?config.protocol);
         Ok((client, bg))

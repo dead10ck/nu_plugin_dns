@@ -9,18 +9,17 @@ use futures_util::{
     FutureExt, StreamExt,
 };
 use hickory_client::client::ClientHandle;
-use hickory_proto::xfer::DnsHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
 use nu_protocol::{
     Example, LabeledError, ListStream, PipelineData, Signals, Signature, Span, SyntaxShape, Value,
 };
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
 
 use crate::{
     dns::{
-        client::DnsClient,
+        client::{BgHandle, DnsClient},
         config::Config,
         constants,
         serde::{self, Query},
@@ -29,8 +28,7 @@ use crate::{
 };
 
 pub type DnsQueryResult = FuturesUnordered<Result<Value, LabeledError>>;
-pub type DnsQueryPluginClient =
-    Arc<tokio::sync::RwLock<Option<(DnsClient, JoinSet<Result<(), hickory_proto::ProtoError>>)>>>;
+pub type DnsQueryPluginClient = Arc<tokio::sync::RwLock<Option<(DnsClient, BgHandle)>>>;
 
 #[derive(Debug)]
 pub struct DnsQuery;
@@ -108,7 +106,11 @@ impl DnsQuery {
                 let (request_tx, request_rx) = mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = mpsc::channel(config.tasks.item);
 
-                plugin.spawn(watch_sigterm(ctrlc.clone(), plugin.cancel.clone()));
+                plugin.spawn(watch_sigterm(
+                    ctrlc.clone(),
+                    plugin.cancel.clone(),
+                    plugin.client.clone(),
+                ));
 
                 plugin.spawn(coordinate_queries(
                     config,
@@ -150,10 +152,10 @@ impl DnsQuery {
         }
     }
 
-    pub(crate) async fn query<C: DnsHandle>(
+    pub(crate) async fn query(
         config: Arc<Config>,
         input: Value,
-        client: C,
+        client: DnsClient,
     ) -> DnsQueryResult {
         let in_span = input.span();
         let queries = match Query::try_from_value(&input, &config) {
@@ -215,8 +217,18 @@ impl DnsQuery {
     }
 }
 
-async fn watch_sigterm(ctrlc: Signals, cancel: CancellationToken) -> Result<(), LabeledError> {
-    while !ctrlc.interrupted() {
+async fn watch_sigterm(
+    ctrlc: Signals,
+    cancel: CancellationToken,
+    client: DnsQueryPluginClient,
+) -> Result<(), LabeledError> {
+    while !ctrlc.interrupted()
+        && client
+            .write()
+            .await
+            .as_mut()
+            .is_some_and(|bg| (&mut bg.1).now_or_never().is_none())
+    {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
@@ -404,7 +416,7 @@ impl PluginCommand for DnsQuery {
             .named(
                 constants::flags::DNSSEC,
                 SyntaxShape::String,
-                "Perform DNSSEC validation on records. Choices are: \"none\", \"strict\" (error if record has no RRSIG or does not validate), \"opportunistic\" (validate if RRSIGs present, otherwise no validation; default)",
+                "Perform DNSSEC validation on records. Choices are: \"none\", \"opportunistic\" (validate if RRSIGs present, otherwise no validation; default)",
                 Some('d'),
             )
             .named(
