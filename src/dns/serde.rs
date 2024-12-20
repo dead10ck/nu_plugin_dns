@@ -377,7 +377,7 @@ impl Record {
         let class = code_to_record_u16(parts.dns_class, config);
         let ttl = util::sec_to_duration(parts.ttl);
         let rdata = RData(parts.rdata).into_value(config)?;
-        let proof = Value::string(parts.proof.to_string(), Span::unknown());
+        let proof = Value::string(parts.proof.to_string().to_lowercase(), Span::unknown());
 
         Ok(Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
@@ -1154,7 +1154,6 @@ impl TryFrom<Value> for Protocol {
 #[derive(Debug, Default, PartialEq)]
 pub enum DnssecMode {
     None,
-    Strict,
 
     #[default]
     Opportunistic,
@@ -1167,11 +1166,10 @@ impl TryFrom<Value> for DnssecMode {
         match value {
             Value::String { .. } => Ok(match value.as_str().unwrap().to_uppercase().as_str() {
                 "NONE" => DnssecMode::None,
-                "STRICT" => DnssecMode::Strict,
                 "OPPORTUNISTIC" => DnssecMode::Opportunistic,
                 _ => {
                     return Err(LabeledError::new("invalid DNSSEC mode").with_label(
-                        "Invalid DNSSEC mode. Must be one of: none, strict, opportunistic",
+                        "Invalid DNSSEC mode. Must be one of: none, opportunistic",
                         value.span(),
                     ));
                 }
