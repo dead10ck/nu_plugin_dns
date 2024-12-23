@@ -21,7 +21,6 @@ use hickory_proto::{
         },
         RecordType,
     },
-    serialize::binary::BinEncodable,
     ProtoError,
 };
 use nu_protocol::{record, FromValue, LabeledError, Span, Value};
@@ -81,28 +80,25 @@ where
     }
 }
 
-pub struct Message {
-    msg: hickory_proto::op::Message,
-    bytes: Vec<u8>,
-}
+#[derive(Debug)]
+pub struct Response(hickory_proto::xfer::DnsResponse);
 
-impl Message {
-    pub fn new(msg: hickory_proto::op::Message) -> Self {
-        let bytes = msg.to_bytes().expect("unencodable message");
-        Self { msg, bytes }
+impl Response {
+    pub fn new(msg: hickory_proto::xfer::DnsResponse) -> Self {
+        Self(msg)
     }
 
-    pub fn into_inner(self) -> hickory_proto::op::Message {
-        self.msg
+    pub fn into_inner(self) -> hickory_proto::xfer::DnsResponse {
+        self.0
     }
 
     pub fn size(&self) -> usize {
-        self.bytes.len()
+        self.0.as_buffer().len()
     }
 
     pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
         let size = Value::filesize(self.size() as i64, Span::unknown());
-        let message = self.into_inner();
+        let message = self.into_inner().into_message();
         let header = Header(message.header()).into_value(config);
         let mut parts = message.into_parts();
 

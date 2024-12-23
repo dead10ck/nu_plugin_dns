@@ -1,17 +1,15 @@
 use std::{
+    pin::Pin,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 
-use futures_util::{
-    select,
-    stream::{FuturesOrdered, FuturesUnordered},
-    FutureExt, StreamExt,
-};
+use futures_util::{stream::FuturesOrdered, Future, FutureExt, StreamExt, TryStreamExt};
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
 use nu_protocol::{
-    Example, LabeledError, ListStream, PipelineData, Signals, Signature, Span, SyntaxShape, Value,
+    Example, IntoValue, LabeledError, ListStream, PipelineData, Signals, Signature, Span,
+    SyntaxShape, Value,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -27,7 +25,8 @@ use crate::{
     Dns,
 };
 
-pub type DnsQueryResult = FuturesUnordered<Result<Value, LabeledError>>;
+pub type DnsQueryResult =
+    FuturesOrdered<Pin<Box<dyn Future<Output = Result<Value, LabeledError>> + Send>>>;
 pub type DnsQueryPluginClient = Arc<tokio::sync::RwLock<Option<(DnsClient, BgHandle)>>>;
 
 #[derive(Debug)]
@@ -84,15 +83,12 @@ impl DnsQuery {
                     tracing::debug!(phase = "input", data.kind = "value");
                 }
 
-                let values = Self::query(config, val, client.clone()).await;
+                let values = Self::query(config, val, client.clone())
+                    .await
+                    .try_collect::<Vec<_>>()
+                    .await?;
 
-                let val = PipelineData::Value(
-                    Value::list(
-                        values.into_iter().collect::<Result<Vec<_>, _>>()?,
-                        Span::unknown(),
-                    ),
-                    None,
-                );
+                let val = PipelineData::Value(Value::list(values, Span::unknown()), None);
 
                 tracing::trace!(phase = "return", ?val);
 
@@ -161,59 +157,71 @@ impl DnsQuery {
         let queries = match Query::try_from_value(&input, &config) {
             Ok(queries) => queries,
             Err(err) => {
-                return vec![Ok(Value::error(err.into(), in_span))]
-                    .into_iter()
-                    .collect()
+                return vec![
+                    Box::pin(std::future::ready(Ok(Value::error(err.into(), in_span))))
+                        as Pin<Box<dyn Future<Output = _> + Send>>,
+                ]
+                .into_iter()
+                .collect()
             }
         };
 
         tracing::debug!(request.queries = ?queries);
 
-        futures_util::stream::iter(queries)
-            .then(|query| {
-                let mut client = client.clone();
-                let config = config.clone();
+        let mut responses = FuturesOrdered::new();
 
-                async move {
-                    let parts = query.0.into_parts();
+        for query in queries {
+            let mut client = client.clone();
+            let config = config.clone();
 
-                    if tracing::enabled!(tracing::Level::TRACE) {
-                        tracing::trace!(query.phase = "start", query.parts = ?parts);
-                    } else {
-                        tracing::debug!(query.phase = "start");
-                    }
+            let resp = async move {
+                let parts = query.0.into_parts();
 
-                    let request = tokio::time::timeout(
-                        config.timeout.item,
-                        client.query(parts.name, parts.query_class, parts.query_type),
-                    );
+                tracing::info!(query.phase = "start", query.parts = ?parts);
 
-                    request
-                        .await
-                        .map_err(|_| {
-                            LabeledError::new("timed out").with_label(
-                                format!("request to {} timed out", config.server.item),
-                                config.server.span,
-                            )
-                        })?
-                        .map_err(|err| {
-                            LabeledError::new("DNS error")
-                                .with_label(format!("Error in DNS response: {:?}", err), in_span)
-                        })
-                        .and_then(|resp: hickory_proto::xfer::DnsResponse| {
-                            let msg = serde::Message::new(resp.into_message());
-                            msg.into_value(&config)
-                        })
-                        .inspect_err(
-                            |err| tracing::debug!(query.phase = "finish", query.error = ?err),
+                let request = tokio::time::timeout(
+                    config.timeout.item,
+                    client.query(parts.name.clone(), parts.query_class, parts.query_type),
+                );
+
+                request
+                    .await
+                    .map_err(|_| {
+                        LabeledError::new("timed out").with_label(
+                            format!("request to {} timed out", config.server.item),
+                            config.server.span,
                         )
-                        .inspect(|resp| {
-                            log_response_val(resp, "finish");
-                        })
-                }
-            })
-            .collect::<FuturesUnordered<_>>()
-            .await
+                    })?
+                    .map_err(|err| {
+                        LabeledError::new("DNS error")
+                            .with_label(format!("Error in DNS response: {:?}", err), in_span)
+                    })
+                    .and_then(|resp: hickory_proto::xfer::DnsResponse| {
+                        let resp = serde::Response::new(resp);
+
+                        if tracing::enabled!(tracing::Level::DEBUG) {
+                            tracing::debug!(query.phase = "finish", query.parts = ?parts, query.resp = ?resp);
+                        } else {
+                            tracing::info!(query.phase = "finish", query.parts = ?parts);
+                        }
+
+                        resp.into_value(&config)
+                    })
+                    .inspect_err(
+                        |err| tracing::debug!(query.phase = "finish", query.error = ?err),
+                    )
+                    .inspect(|resp| {
+                        log_response_val(resp, "finish");
+                    })
+            };
+
+            // apparently you cannot just collect this into a `FuturesOrdered`
+            // because doing so causes each future to be polled in serial,
+            // completely defeating the point
+            responses.push_back(Box::pin(resp) as Pin<Box<dyn Future<Output = _> + Send>>);
+        }
+
+        responses
     }
 }
 
@@ -272,54 +280,36 @@ async fn coordinate_queries(
 ) -> Result<(), LabeledError> {
     tracing::trace!(task.query_coordinator.phase = "start");
     let mut buf = Vec::with_capacity(config.tasks.item);
-    let mut result_queue = FuturesOrdered::new();
 
     while request_rx.recv_many(&mut buf, config.tasks.item).await > 0 {
         tracing::trace!(query.phase = "batch received", query.batchsize = buf.len());
 
-        for val in buf.drain(..) {
-            tracing::trace!(query = ?val, query.phase = "received");
+        let config = config.clone();
+        let client = client.clone();
+        let cancel = cancel.clone();
 
-            let config = config.clone();
-            let client = client.clone();
-            let cancel = cancel.clone();
+        let val = std::mem::replace(&mut buf, Vec::with_capacity(config.tasks.item))
+            .into_value(Span::unknown());
 
-            let handle = tokio::spawn(async move {
-                tracing::trace!(task.query_exec.phase = "start");
+        tracing::trace!(task.query_exec.phase = "start");
 
-                let mut query = Box::pin(DnsQuery::query(config, val, client).fuse());
-                let mut cancelled = Box::pin(cancel.cancelled().fuse());
+        let mut result = tokio::select! {
+            _ = cancel.cancelled() => vec![Box::pin(std::future::ready(Err(LabeledError::new("canceled")))) as Pin<Box<dyn Future<Output = _> + Send>>].into_iter().collect(),
+            resp = DnsQuery::query(config, val, client) => resp,
+        };
 
-                let result = select! {
-                    resp = query => resp,
-                    _ = cancelled => vec![Err(LabeledError::new("canceled"))].into_iter().collect(),
-                };
+        tracing::trace!(
+            task.query_exec.phase = "end",
+            task.query_exec.result = ?result
+        );
 
-                tracing::trace!(
-                    task.query_exec.phase = "end",
-                    task.query_exec.result = ?result
-                );
-
-                result
-            });
-
-            result_queue.push_back(handle);
-        }
-
-        while let Some(query_result) = result_queue.next().await {
-            let query_result = query_result.map_err(|err| {
-                LabeledError::new("internal error")
-                    .with_label(format!("task panicked: {}", err), Span::unknown())
+        while let Some(resp) = StreamExt::next(&mut result).await {
+            resp_tx.send(resp).await.map_err(|send_err| {
+                LabeledError::new("internal error").with_label(
+                    format!("failed to send dns query result: {}", send_err),
+                    Span::unknown(),
+                )
             })?;
-
-            for resp in query_result.into_iter() {
-                resp_tx.send(resp).await.map_err(|send_err| {
-                    LabeledError::new("internal error").with_label(
-                        format!("failed to send dns query result: {}", send_err),
-                        Span::unknown(),
-                    )
-                })?;
-            }
         }
     }
 
