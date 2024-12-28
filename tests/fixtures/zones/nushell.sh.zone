@@ -1,0 +1,15 @@
+$ORIGIN nushell.sh.
+$TTL 30m
+
+@   IN          SOA     dns1.registrar-servers.com. hostmaster.registrar-servers.com. (
+                                1677639553 ; Serial
+                                43200      ; Refresh
+                                3600       ; Retry
+                                604800     ; Expire
+                                3601)      ; Minimum TTL
+
+                AAAA    2606:50c0:8000::153
+                A       185.199.108.153
+                A       185.199.109.153
+                A       185.199.110.153
+                A       185.199.111.153
