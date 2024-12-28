@@ -6,7 +6,7 @@ use std::{
 
 use futures_util::{stream::FuturesOrdered, Future, FutureExt, StreamExt, TryStreamExt};
 use hickory_client::client::ClientHandle;
-use nu_plugin::{EngineInterface, EvaluatedCall, Plugin, PluginCommand};
+use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
     Example, IntoValue, LabeledError, ListStream, PipelineData, Signals, Signature, Span,
     SyntaxShape, Value,
@@ -329,16 +329,6 @@ pub(crate) fn log_response_val(resp: &Value, phase: &str) {
             query.response.question = ?question,
             query.response.answer = ?answer
         );
-    }
-}
-
-impl Plugin for Dns {
-    fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
-        vec![Box::new(DnsQuery)]
-    }
-
-    fn version(&self) -> String {
-        env!("CARGO_PKG_VERSION").into()
     }
 }
 

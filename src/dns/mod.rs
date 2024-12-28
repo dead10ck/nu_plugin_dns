@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use futures_util::Future;
 use hickory_proto::runtime::TokioRuntimeProvider;
+use nu_plugin::{Plugin, PluginCommand};
 use nu_protocol::LabeledError;
 use tokio::task::JoinHandle;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -22,6 +23,16 @@ pub struct Dns {
     tasks: TaskTracker,
     cancel: CancellationToken,
     client: DnsQueryPluginClient,
+}
+
+impl Plugin for Dns {
+    fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
+        vec![Box::new(commands::query::DnsQuery)]
+    }
+
+    fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").into()
+    }
 }
 
 impl Dns {

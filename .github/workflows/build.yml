@@ -19,30 +19,17 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@main
 
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@main
         with:
           profile: minimal
           toolchain: stable
           override: true
 
-      - name: install nushell
-        uses: taiki-e/install-action@v1
-        with:
-          tool: nu
+      - name: cargo build
+        run: cargo build
 
       - name: cargo build
-        run: |-
-          echo -n 'BIN_PATH=' >> $GITHUB_ENV && 
-          cargo build --message-format json |
-          jq -r 'select(.target?.name == "nu_plugin_dns" and (.target?.kind | contains(["bin"]))) | .executable' >> $GITHUB_ENV
-
-      - name: touch plugins.nu
-        run: touch plugins.nu
-
-      - name: test
-        env:
-          RUST_LOG: debug
-        run: nu --plugin-config plugins.nu -c "register $BIN_PATH; dns query google.com"
+        run: cargo test --workspace

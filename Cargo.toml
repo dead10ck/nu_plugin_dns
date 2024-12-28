@@ -67,6 +67,15 @@ features = [
   "dns-over-quic",
 ]
 
-# For termux
-# [patch.crates-io]
-# pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
+[dev-dependencies]
+nu-plugin-test-support = "0.100.0"
+tokio = { version = "1.42.0", features = ["fs"] }
+
+[dev-dependencies.hickory-server]
+version = "0.25.0-alpha.4"
+features = [
+  "dnssec-ring",
+  "dns-over-rustls",
+  "dns-over-https-rustls",
+  "dns-over-quic",
+]
