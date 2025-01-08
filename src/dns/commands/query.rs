@@ -20,7 +20,7 @@ use crate::{
         client::{BgHandle, DnsClient},
         config::Config,
         constants,
-        serde::{self, Query},
+        serde::Query,
     },
     Dns,
 };
@@ -197,7 +197,7 @@ impl DnsQuery {
                             .with_label(format!("Error in DNS response: {:?}", err), in_span)
                     })
                     .and_then(|resp: hickory_proto::xfer::DnsResponse| {
-                        let resp = serde::Response::new(resp);
+                        let resp = crate::dns::serde::Response::new(resp, &config);
 
                         if tracing::enabled!(tracing::Level::DEBUG) {
                             tracing::debug!(query.phase = "finish", query.parts = ?parts, query.resp = ?resp);
@@ -205,7 +205,7 @@ impl DnsQuery {
                             tracing::info!(query.phase = "finish", query.parts = ?parts);
                         }
 
-                        resp.into_value(&config)
+                        resp.into_value()
                     })
                     .inspect_err(
                         |err| tracing::debug!(query.phase = "finish", query.error = ?err),

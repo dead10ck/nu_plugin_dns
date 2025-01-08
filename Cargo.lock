@@ -804,8 +804,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "hickory-client"
 version = "0.25.0-alpha.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83536dab9a159b2b5cf2c20c47ecf188cee35316f96be028e63e8e1340d2724d"
+source = "git+https://github.com/hickory-dns/hickory-dns#a6d31dc4b7ce314e115050658d9cb066791a40f4"
 dependencies = [
  "cfg-if",
  "data-encoding",
@@ -824,8 +823,7 @@ dependencies = [
 [[package]]
 name = "hickory-proto"
 version = "0.25.0-alpha.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d063c0692ee669aa6d261988aa19ca5510f1cc40e4f211024f50c888499a35d7"
+source = "git+https://github.com/hickory-dns/hickory-dns#a6d31dc4b7ce314e115050658d9cb066791a40f4"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -848,6 +846,7 @@ dependencies = [
  "rand",
  "ring",
  "rustls",
+ "rustls-pki-types",
  "serde",
  "thiserror 2.0.7",
  "time",
@@ -861,8 +860,7 @@ dependencies = [
 [[package]]
 name = "hickory-recursor"
 version = "0.25.0-alpha.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4c8782f59390db9ddb096c8eef9a71f0af52818825b238c193011a147934c42"
+source = "git+https://github.com/hickory-dns/hickory-dns#a6d31dc4b7ce314e115050658d9cb066791a40f4"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -885,8 +883,7 @@ dependencies = [
 [[package]]
 name = "hickory-resolver"
 version = "0.25.0-alpha.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42bc352e4412fb657e795f79b4efcf2bd60b59ee5ca0187f3554194cd1107a27"
+source = "git+https://github.com/hickory-dns/hickory-dns#a6d31dc4b7ce314e115050658d9cb066791a40f4"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -910,8 +907,7 @@ dependencies = [
 [[package]]
 name = "hickory-server"
 version = "0.25.0-alpha.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa7154e905d5c8a79c15427881e479b2ba749c55412804f0dc87723a531e45bd"
+source = "git+https://github.com/hickory-dns/hickory-dns#a6d31dc4b7ce314e115050658d9cb066791a40f4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1756,10 +1752,12 @@ dependencies = [
  "nu-plugin-test-support",
  "nu-protocol",
  "rustls",
+ "serde",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "typetag",
  "webpki-roots",
 ]
 

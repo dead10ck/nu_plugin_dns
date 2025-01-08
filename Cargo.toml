@@ -25,21 +25,27 @@ bench = false
 
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
-futures-util = "0.3.31"
+
 nu-plugin = "0.101.0"
 nu-protocol = "0.101.0"
 
 tokio = "1.42.0"
+tokio-util = { version = "0.7.13", features = ["rt"] }
+futures-util = "0.3.31"
+
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
 rustls = "0.23.20"
 webpki-roots = "0.26.7"
-tokio-util = { version = "0.7.13", features = ["rt"] }
+
+serde = { version = "1", features = ["derive"] }
+typetag = "0.2"
 
 [dependencies.hickory-resolver]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
@@ -48,17 +54,20 @@ features = [
 ]
 
 [dependencies.hickory-proto]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns"
 features = [
   "dnssec-ring",
   "backtrace",
   "dns-over-rustls",
   "dns-over-https-rustls",
   "dns-over-quic",
+  "serde",
 ]
 
 [dependencies.hickory-client]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns"
 features = [
   "dnssec-ring",
   "backtrace",
@@ -72,7 +81,8 @@ nu-plugin-test-support = "0.101.0"
 tokio = { version = "1.42.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
