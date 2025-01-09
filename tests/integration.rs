@@ -1,20 +1,20 @@
 use std::{
-    net::SocketAddrV6,
+    net::{Ipv4Addr, SocketAddrV6},
     ops::Deref,
     path::PathBuf,
     str::FromStr,
     sync::{Arc, LazyLock},
 };
 
-use hickory_proto::rr::{DNSClass, RecordType};
-use hickory_resolver::IntoName;
+use hickory_resolver::{IntoName, Name};
 use hickory_server::{
     authority::{Catalog, ZoneType},
     store::file::{FileAuthority, FileConfig},
     ServerFuture,
 };
+use nu_plugin_dns::{dns, Dns};
 use nu_plugin_test_support::PluginTest;
-use nu_protocol::{record, IntoValue, ShellError, Span, Value};
+use nu_protocol::{record, IntoValue, ShellError, Span, TryIntoValue, Value};
 use tokio::net::UdpSocket;
 
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
@@ -120,7 +120,10 @@ impl TestHarness {
         let mut config = state.get_config().deref().clone();
         let plugin_config = Value::test_record(Self::test_plugin_config(test_config));
 
-        config.plugins.insert("dns".into(), plugin_config);
+        config
+            .plugins
+            .insert(Dns::PLUGIN_NAME.into(), plugin_config);
+
         state.set_config(Arc::new(config));
 
         test
@@ -142,14 +145,50 @@ fn assert_message_success(message: &nu_protocol::Record) -> Result<(), ShellErro
     Ok(())
 }
 
+fn record_values<I, R, N>(code: bool, iter: I) -> Value
+where
+    N: IntoName,
+    I: IntoIterator<Item = (N, chrono::Duration, R)>,
+    R: Into<hickory_proto::rr::RData>,
+{
+    iter.into_iter()
+        .map(|(name, ttl, rdata)| {
+            dns::serde::Record(hickory_proto::rr::Record::from_rdata(
+                name.into_name().unwrap(),
+                ttl.num_seconds() as u32,
+                rdata.into(),
+            ))
+            .into_value(code)
+            .unwrap()
+        })
+        .collect::<Vec<_>>()
+        .try_into_value(Span::unknown())
+        .unwrap()
+}
+
+// fn test_dns_query()
+
 #[test]
 fn a() -> Result<(), ShellError> {
+    const TTL: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
+    let name: Name = "nushell.sh.".parse().unwrap();
+
+    let mut test = TestHarness::plugin_test(Some(
+        record!("dnssec" => "none".into_value(Span::unknown())),
+    ));
+
+    let code = test
+        .engine_state()
+        .get_plugin_config(Dns::PLUGIN_NAME)
+        .unwrap()
+        .get_data_by_key("code")
+        .unwrap()
+        .as_bool()
+        .unwrap();
+
     let actual = HARNESS.runtime.block_on(async {
-        TestHarness::plugin_test(Some(
-            record!("dnssec" => "none".into_value(Span::unknown())),
-        ))
-        .eval("dns query --type a 'nushell.sh.'")?
-        .into_value(Span::test_data())
+        test.eval(&format!("dns query --type a '{name}'"))?
+            .into_value(Span::test_data())
     })?;
 
     let mut values = actual.into_list().unwrap();
@@ -158,21 +197,8 @@ fn a() -> Result<(), ShellError> {
     let message = values.pop().unwrap().into_record().unwrap();
     assert_message_success(&message)?;
 
-    let rec_base = record!(
-        "name" => Value::test_string(String::from("nushell.sh.")),
-        "type" => Value::test_record(record!(
-            "name" => Value::test_string(String::from("A")),
-            "code" => Value::test_int(Into::<u16>::into(RecordType::A) as i64),
-        )),
-        "class" => Value::test_record(record!(
-            "name" => Value::test_string(String::from("IN")),
-            "code" => Value::test_int(Into::<u16>::into(DNSClass::IN) as i64),
-        )),
-        "ttl" => Value::test_duration(chrono::TimeDelta::minutes(30).num_nanoseconds().unwrap()),
-        "proof" => Value::test_string(String::from("indeterminate")),
-    );
-
-    let expected_records = Value::test_list(
+    let expected = record_values(
+        code,
         [
             "185.199.108.153",
             "185.199.109.153",
@@ -180,17 +206,13 @@ fn a() -> Result<(), ShellError> {
             "185.199.111.153",
         ]
         .into_iter()
-        .map(|ip| {
-            let mut rec = rec_base.clone();
-            rec.insert("rdata", Value::test_string(ip));
-            Value::test_record(rec)
-        })
-        .collect::<Vec<_>>(),
+        .map(|ip| Ipv4Addr::from_str(ip).unwrap())
+        .map(|ip| (name.clone(), TTL, ip)),
     );
 
     let actual = message.get("answer").unwrap();
 
-    assert_eq!(&expected_records, actual);
+    assert_eq!(&expected, actual);
 
     Ok(())
 }

@@ -205,7 +205,7 @@ impl DnsQuery {
                             tracing::info!(query.phase = "finish", query.parts = ?parts);
                         }
 
-                        resp.into_value(&config)
+                        resp.into_value(config.code.item)
                     })
                     .inspect_err(
                         |err| tracing::debug!(query.phase = "finish", query.error = ?err),

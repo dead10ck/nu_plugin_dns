@@ -7,15 +7,16 @@ use nu_protocol::LabeledError;
 use tokio::task::JoinHandle;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-use self::{client::DnsClient, commands::query::DnsQueryPluginClient, config::Config};
+use self::{client::DnsClient, commands::query::DnsQueryPluginClient};
+pub use config::Config;
 
-mod client;
-mod commands;
-mod config;
-mod constants;
-mod serde;
+pub mod client;
+pub mod commands;
+pub mod config;
+pub mod constants;
+pub mod serde;
 #[macro_use]
-mod util;
+pub mod util;
 
 pub struct Dns {
     main_runtime: tokio::runtime::Runtime,
@@ -36,6 +37,8 @@ impl Plugin for Dns {
 }
 
 impl Dns {
+    pub const PLUGIN_NAME: &str = "dns";
+
     pub fn new() -> Self {
         Self {
             main_runtime: tokio::runtime::Runtime::new().unwrap(),

@@ -28,13 +28,13 @@ use nu_protocol::{record, FromValue, LabeledError, Span, Value};
 use super::config::Config;
 use super::constants;
 
-fn code_to_record_u16<C>(code: C, config: &Config) -> Value
+fn code_to_record_u16<C>(bytes: C, code: bool) -> Value
 where
     C: Display + Into<u16>,
 {
-    let code_string = Value::string(code.to_string(), Span::unknown());
+    let code_string = Value::string(bytes.to_string(), Span::unknown());
 
-    if config.code.item {
+    if code {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
@@ -44,7 +44,7 @@ where
                 ),
                 vec![
                     code_string,
-                    Value::int(Into::<u16>::into(code) as i64, Span::unknown()),
+                    Value::int(Into::<u16>::into(bytes) as i64, Span::unknown()),
                 ],
             )),
             Span::unknown(),
@@ -54,13 +54,13 @@ where
     }
 }
 
-fn code_to_record_u8<C>(code: C, config: &Config) -> Value
+fn code_to_record_u8<C>(bytes: C, code: bool) -> Value
 where
     C: Display + Into<u8>,
 {
-    let code_string = Value::string(code.to_string(), Span::unknown());
+    let code_string = Value::string(bytes.to_string(), Span::unknown());
 
-    if config.code.item {
+    if code {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
@@ -70,7 +70,7 @@ where
                 ),
                 vec![
                     code_string,
-                    Value::int(Into::<u8>::into(code) as i64, Span::unknown()),
+                    Value::int(Into::<u8>::into(bytes) as i64, Span::unknown()),
                 ],
             )),
             Span::unknown(),
@@ -96,15 +96,15 @@ impl Response {
         self.0.as_buffer().len()
     }
 
-    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
+    pub fn into_value(self, code: bool) -> Result<Value, LabeledError> {
         let size = Value::filesize(self.size() as i64, Span::unknown());
         let message = self.into_inner().into_message();
-        let header = Header(message.header()).into_value(config);
+        let header = Header(message.header()).into_value(code);
         let mut parts = message.into_parts();
 
         let question = parts.queries.pop().map_or_else(
             || Value::record(record!(), Span::unknown()),
-            |q| Query(q).into_value(config),
+            |q| Query(q).into_value(code),
         );
 
         let parse_records =
@@ -112,7 +112,7 @@ impl Response {
                 Ok(Value::list(
                     records
                         .into_iter()
-                        .map(|record| Record(record).into_value(config))
+                        .map(|record| Record(record).into_value(code))
                         .collect::<Result<_, _>>()?,
                     Span::unknown(),
                 ))
@@ -123,7 +123,7 @@ impl Response {
         let additional = parse_records(parts.additionals)?;
         let edns = parts
             .edns
-            .map(|edns| Edns(edns).into_value(config))
+            .map(|edns| Edns(edns).into_value())
             .unwrap_or(Value::nothing(Span::unknown()));
 
         Ok(Value::record(
@@ -136,16 +136,16 @@ impl Response {
     }
 }
 
-pub struct Header<'r>(pub(crate) &'r hickory_proto::op::Header);
+pub struct Header<'r>(pub &'r hickory_proto::op::Header);
 
 impl Header<'_> {
-    pub fn into_value(self, config: &Config) -> Value {
+    pub fn into_value(self, code: bool) -> Value {
         let Header(header) = self;
 
         let id = Value::int(header.id().into(), Span::unknown());
 
         let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
-        let message_type = if config.code.item {
+        let message_type = if code {
             Value::record(
                 nu_protocol::Record::from_iter(std::iter::zip(
                     Vec::from_iter(
@@ -164,13 +164,13 @@ impl Header<'_> {
             message_type_string
         };
 
-        let op_code = code_to_record_u8(header.op_code(), config);
+        let op_code = code_to_record_u8(header.op_code(), code);
         let authoritative = Value::bool(header.authoritative(), Span::unknown());
         let truncated = Value::bool(header.truncated(), Span::unknown());
         let recursion_desired = Value::bool(header.recursion_desired(), Span::unknown());
         let recursion_available = Value::bool(header.recursion_available(), Span::unknown());
         let authentic_data = Value::bool(header.authentic_data(), Span::unknown());
-        let response_code = code_to_record_u16(header.response_code(), config);
+        let response_code = code_to_record_u16(header.response_code(), code);
         let query_count = Value::int(header.query_count().into(), Span::unknown());
         let answer_count = Value::int(header.answer_count().into(), Span::unknown());
         let name_server_count = Value::int(header.name_server_count().into(), Span::unknown());
@@ -201,15 +201,15 @@ impl Header<'_> {
 }
 
 #[derive(Debug)]
-pub struct Query(pub(crate) hickory_proto::op::query::Query);
+pub struct Query(pub hickory_proto::op::query::Query);
 
 impl Query {
-    pub fn into_value(self, config: &Config) -> Value {
+    pub fn into_value(self, code: bool) -> Value {
         let Query(query) = self;
 
         let name = Value::string(query.name().to_utf8(), Span::unknown());
-        let qtype = code_to_record_u16(query.query_type(), config);
-        let class = code_to_record_u16(query.query_class(), config);
+        let qtype = code_to_record_u16(query.query_type(), code);
+        let class = code_to_record_u16(query.query_class(), code);
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
@@ -361,18 +361,18 @@ impl Query {
     }
 }
 
-pub struct Record(pub(crate) hickory_proto::rr::resource::Record);
+pub struct Record(pub hickory_proto::rr::resource::Record);
 
 impl Record {
-    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
+    pub fn into_value(self, code: bool) -> Result<Value, LabeledError> {
         let Record(record) = self;
         let parts = record.into_parts();
 
         let name = Value::string(parts.name_labels.to_utf8(), Span::unknown());
-        let rtype = code_to_record_u16(parts.rdata.record_type(), config);
-        let class = code_to_record_u16(parts.dns_class, config);
+        let rtype = code_to_record_u16(parts.rdata.record_type(), code);
+        let class = code_to_record_u16(parts.dns_class, code);
         let ttl = util::sec_to_duration(parts.ttl);
-        let rdata = RData(parts.rdata).into_value(config)?;
+        let rdata = RData(parts.rdata).into_value()?;
         let proof = Value::string(parts.proof.to_string().to_lowercase(), Span::unknown());
 
         Ok(Value::record(
@@ -385,10 +385,10 @@ impl Record {
     }
 }
 
-pub struct RData(pub(crate) hickory_proto::rr::RData);
+pub struct RData(pub hickory_proto::rr::RData);
 
 impl RData {
-    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
+    pub fn into_value(self) -> Result<Value, LabeledError> {
         let val = match self.0 {
             hickory_proto::rr::RData::CAA(caa) => {
                 let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
@@ -560,7 +560,7 @@ impl RData {
             hickory_proto::rr::RData::OPENPGPKEY(key) => {
                 Value::binary(key.public_key(), Span::unknown())
             }
-            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(config),
+            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(),
             hickory_proto::rr::RData::PTR(name) => Value::string(name.to_string(), Span::unknown()),
 
             hickory_proto::rr::RData::SOA(soa) => {
@@ -966,10 +966,10 @@ fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
     )
 }
 
-pub struct Edns(pub(crate) hickory_proto::op::Edns);
+pub struct Edns(pub hickory_proto::op::Edns);
 
 impl Edns {
-    pub fn into_value(self, config: &Config) -> Value {
+    pub fn into_value(self) -> Value {
         let edns = self.0;
         let rcode_high = Value::int(edns.rcode_high() as i64, Span::unknown());
         let version = Value::int(edns.version() as i64, Span::unknown());
@@ -982,7 +982,7 @@ impl Edns {
         );
 
         let max_payload = Value::filesize(edns.max_payload() as i64, Span::unknown());
-        let opts = Opt(edns.options()).into_value(config);
+        let opts = Opt(edns.options()).into_value();
 
         Value::record(
             record![
@@ -997,10 +997,10 @@ impl Edns {
     }
 }
 
-pub struct Opt<'o>(pub(crate) &'o hickory_proto::rr::rdata::OPT);
+pub struct Opt<'o>(pub &'o hickory_proto::rr::rdata::OPT);
 
 impl Opt<'_> {
-    pub fn into_value(self, _config: &Config) -> Value {
+    pub fn into_value(self) -> Value {
         let opts: HashMap<_, _> = self
             .0
             .as_ref()
@@ -1052,7 +1052,7 @@ impl Opt<'_> {
     }
 }
 
-pub struct RType(pub(crate) hickory_proto::rr::RecordType);
+pub struct RType(pub hickory_proto::rr::RecordType);
 
 impl TryFrom<&Value> for RType {
     type Error = LabeledError;
@@ -1088,7 +1088,7 @@ impl TryFrom<&Value> for RType {
     }
 }
 
-pub struct DNSClass(pub(crate) hickory_proto::rr::DNSClass);
+pub struct DNSClass(pub hickory_proto::rr::DNSClass);
 
 impl TryFrom<Value> for DNSClass {
     type Error = LabeledError;
@@ -1117,7 +1117,7 @@ impl TryFrom<Value> for DNSClass {
     }
 }
 
-pub struct Protocol(pub(crate) hickory_proto::xfer::Protocol);
+pub struct Protocol(pub hickory_proto::xfer::Protocol);
 
 impl TryFrom<Value> for Protocol {
     type Error = LabeledError;
