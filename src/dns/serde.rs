@@ -38,7 +38,7 @@ where
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
-                    constants::columns::CODE_COLS
+                    constants::columns::rr::code::COLS
                         .iter()
                         .map(|s| String::from(*s)),
                 ),
@@ -64,7 +64,7 @@ where
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
-                    constants::columns::CODE_COLS
+                    constants::columns::rr::code::COLS
                         .iter()
                         .map(|s| String::from(*s)),
                 ),
@@ -128,7 +128,11 @@ impl Response {
 
         Ok(Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(
+                    constants::columns::message::COLS
+                        .iter()
+                        .map(|s| (*s).into()),
+                ),
                 vec![header, question, answer, authority, additional, edns, size],
             )),
             Span::unknown(),
@@ -149,7 +153,7 @@ impl Header<'_> {
             Value::record(
                 nu_protocol::Record::from_iter(std::iter::zip(
                     Vec::from_iter(
-                        constants::columns::CODE_COLS
+                        constants::columns::rr::code::COLS
                             .iter()
                             .map(|s| String::from(*s)),
                     ),
@@ -178,7 +182,11 @@ impl Header<'_> {
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::HEADER_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(
+                    constants::columns::message::header::COLS
+                        .iter()
+                        .map(|s| (*s).into()),
+                ),
                 vec![
                     id,
                     message_type,
@@ -213,7 +221,11 @@ impl Query {
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::QUERY_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(
+                    constants::columns::message::query::COLS
+                        .iter()
+                        .map(|s| (*s).into()),
+                ),
                 vec![name, qtype, class],
             )),
             Span::unknown(),
@@ -238,8 +250,8 @@ impl Query {
 
                 let name = domain::Name::from_utf8(
                     String::from_value(
-                        rec.get_data_by_key(constants::columns::NAME)
-                            .ok_or_else(|| must_have_col_err(constants::columns::NAME))?,
+                        rec.get_data_by_key(constants::columns::rr::NAME)
+                            .ok_or_else(|| must_have_col_err(constants::columns::rr::NAME))?,
                     )
                     .map_err(|err| {
                         LabeledError::new("invalid value")
@@ -252,12 +264,12 @@ impl Query {
                 })?;
 
                 let qtype = RType::try_from(
-                    &rec.get_data_by_key(constants::columns::TYPE)
-                        .ok_or_else(|| must_have_col_err(constants::columns::TYPE))?,
+                    &rec.get_data_by_key(constants::columns::rr::TYPE)
+                        .ok_or_else(|| must_have_col_err(constants::columns::rr::TYPE))?,
                 )?;
 
                 let class = rec
-                    .get_data_by_key(constants::columns::CLASS)
+                    .get_data_by_key(constants::columns::rr::CLASS)
                     .map(DNSClass::try_from)
                     .unwrap_or(Ok(DNSClass(hickory_proto::rr::DNSClass::IN)))?
                     .0;
@@ -377,7 +389,7 @@ impl Record {
 
         Ok(Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::RECORD_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(constants::columns::rr::COLS.iter().map(|s| (*s).into())),
                 vec![name, rtype, class, ttl, rdata, proof],
             )),
             Span::unknown(),

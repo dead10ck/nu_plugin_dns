@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     net::{Ipv4Addr, SocketAddrV6},
     ops::Deref,
     path::PathBuf,
@@ -12,7 +13,10 @@ use hickory_server::{
     store::file::{FileAuthority, FileConfig},
     ServerFuture,
 };
-use nu_plugin_dns::{dns, Dns};
+use nu_plugin_dns::{
+    dns::{self, constants},
+    Dns,
+};
 use nu_plugin_test_support::PluginTest;
 use nu_protocol::{record, IntoValue, ShellError, Span, TryIntoValue, Value};
 use tokio::net::UdpSocket;
@@ -85,8 +89,8 @@ impl TestHarness {
 
     fn test_plugin_config(test_config: Option<nu_protocol::Record>) -> nu_protocol::Record {
         let mut config = record!(
-            "server" => Value::test_string(Self::TEST_RESOLVER_SOCKET_ADDR),
-            "code" => true.into_value(Span::unknown()),
+            constants::flags::SERVER => Value::test_string(Self::TEST_RESOLVER_SOCKET_ADDR),
+            constants::flags::CODE => true.into_value(Span::unknown()),
         );
 
         if let Some(test_config) = test_config {
@@ -115,7 +119,7 @@ impl TestHarness {
     }
 
     fn plugin_test(test_config: Option<nu_protocol::Record>) -> PluginTest {
-        let mut test = PluginTest::new("dns", nu_plugin_dns::Dns::new().into()).unwrap();
+        let mut test = PluginTest::new(Dns::PLUGIN_NAME, nu_plugin_dns::Dns::new().into()).unwrap();
         let state = test.engine_state_mut();
         let mut config = state.get_config().deref().clone();
         let plugin_config = Value::test_record(Self::test_plugin_config(test_config));
@@ -131,17 +135,25 @@ impl TestHarness {
 }
 
 fn assert_message_success(message: &nu_protocol::Record) -> Result<(), ShellError> {
-    let header = message.get("header").unwrap().as_record().unwrap();
+    let header = message
+        .get(constants::columns::message::HEADER)
+        .unwrap()
+        .as_record()
+        .unwrap();
 
     let resp_code = header
-        .get("response_code")
+        .get(constants::columns::message::header::RESPONSE_CODE)
         .unwrap()
         .as_record()?
-        .get("code")
+        .get(constants::flags::CODE)
         .unwrap()
         .as_int()?;
 
-    assert_eq!(0, resp_code);
+    assert_eq!(
+        hickory_proto::op::ResponseCode::NoError.low() as i64,
+        resp_code
+    );
+
     Ok(())
 }
 
@@ -174,14 +186,14 @@ fn a() -> Result<(), ShellError> {
     let name: Name = "nushell.sh.".parse().unwrap();
 
     let mut test = TestHarness::plugin_test(Some(
-        record!("dnssec" => "none".into_value(Span::unknown())),
+        record!(constants::flags::DNSSEC => "none".into_value(Span::unknown())),
     ));
 
     let code = test
         .engine_state()
         .get_plugin_config(Dns::PLUGIN_NAME)
         .unwrap()
-        .get_data_by_key("code")
+        .get_data_by_key(constants::flags::CODE)
         .unwrap()
         .as_bool()
         .unwrap();
@@ -210,7 +222,7 @@ fn a() -> Result<(), ShellError> {
         .map(|ip| (name.clone(), TTL, ip)),
     );
 
-    let actual = message.get("answer").unwrap();
+    let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
     assert_eq!(&expected, actual);
 
