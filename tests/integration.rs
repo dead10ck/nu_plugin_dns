@@ -1,5 +1,4 @@
 use std::{
-    fmt::Display,
     net::{Ipv4Addr, SocketAddrV6},
     ops::Deref,
     path::PathBuf,
@@ -91,6 +90,7 @@ impl TestHarness {
         let mut config = record!(
             constants::flags::SERVER => Value::test_string(Self::TEST_RESOLVER_SOCKET_ADDR),
             constants::flags::CODE => true.into_value(Span::unknown()),
+            constants::flags::DNSSEC => "none".into_value(Span::unknown()),
         );
 
         if let Some(test_config) = test_config {
@@ -118,7 +118,13 @@ impl TestHarness {
         })
     }
 
-    fn plugin_test(test_config: Option<nu_protocol::Record>) -> PluginTest {
+    fn plugin_test(
+        &self,
+        test_config: Option<nu_protocol::Record>,
+        cmd: impl AsRef<str>,
+        expected_resp_code: HickoryResponseCode,
+        validate: impl Fn(bool, &nu_protocol::Record),
+    ) -> Result<PluginTest, ShellError> {
         let mut test = PluginTest::new(Dns::PLUGIN_NAME, nu_plugin_dns::Dns::new().into()).unwrap();
         let state = test.engine_state_mut();
         let mut config = state.get_config().deref().clone();
@@ -130,16 +136,41 @@ impl TestHarness {
 
         state.set_config(Arc::new(config));
 
-        test
+        let code = test
+            .engine_state()
+            .get_plugin_config(Dns::PLUGIN_NAME)
+            .unwrap()
+            .get_data_by_key(constants::flags::CODE)
+            .unwrap()
+            .as_bool()
+            .unwrap();
+
+        let actual = self
+            .runtime
+            .block_on(async { test.eval(cmd.as_ref())?.into_value(Span::test_data()) })?;
+
+        let mut values = actual.into_list().unwrap();
+        assert_eq!(1, values.len());
+
+        let message = values.pop().unwrap().into_record().unwrap();
+        assert_message_response(&message, expected_resp_code)?;
+
+        validate(code, &message);
+
+        Ok(test)
     }
 }
 
-fn assert_message_success(message: &nu_protocol::Record) -> Result<(), ShellError> {
+type HickoryResponseCode = hickory_proto::op::ResponseCode;
+
+fn assert_message_response(
+    message: &nu_protocol::Record,
+    expected_resp_code: HickoryResponseCode,
+) -> Result<(), ShellError> {
     let header = message
         .get(constants::columns::message::HEADER)
         .unwrap()
-        .as_record()
-        .unwrap();
+        .as_record()?;
 
     let resp_code = header
         .get(constants::columns::message::header::RESPONSE_CODE)
@@ -149,10 +180,7 @@ fn assert_message_success(message: &nu_protocol::Record) -> Result<(), ShellErro
         .unwrap()
         .as_int()?;
 
-    assert_eq!(
-        hickory_proto::op::ResponseCode::NoError.low() as i64,
-        resp_code
-    );
+    assert_eq!(expected_resp_code.low() as i64, resp_code);
 
     Ok(())
 }
@@ -185,46 +213,29 @@ fn a() -> Result<(), ShellError> {
     const TTL: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
     let name: Name = "nushell.sh.".parse().unwrap();
 
-    let mut test = TestHarness::plugin_test(Some(
-        record!(constants::flags::DNSSEC => "none".into_value(Span::unknown())),
-    ));
+    HARNESS.plugin_test(
+        None,
+        format!("dns query --type a '{name}'"),
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [
+                    "185.199.108.153",
+                    "185.199.109.153",
+                    "185.199.110.153",
+                    "185.199.111.153",
+                ]
+                .into_iter()
+                .map(|ip| Ipv4Addr::from_str(ip).unwrap())
+                .map(|ip| (name.clone(), TTL, ip)),
+            );
 
-    let code = test
-        .engine_state()
-        .get_plugin_config(Dns::PLUGIN_NAME)
-        .unwrap()
-        .get_data_by_key(constants::flags::CODE)
-        .unwrap()
-        .as_bool()
-        .unwrap();
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
-    let actual = HARNESS.runtime.block_on(async {
-        test.eval(&format!("dns query --type a '{name}'"))?
-            .into_value(Span::test_data())
-    })?;
-
-    let mut values = actual.into_list().unwrap();
-    assert_eq!(1, values.len());
-
-    let message = values.pop().unwrap().into_record().unwrap();
-    assert_message_success(&message)?;
-
-    let expected = record_values(
-        code,
-        [
-            "185.199.108.153",
-            "185.199.109.153",
-            "185.199.110.153",
-            "185.199.111.153",
-        ]
-        .into_iter()
-        .map(|ip| Ipv4Addr::from_str(ip).unwrap())
-        .map(|ip| (name.clone(), TTL, ip)),
-    );
-
-    let actual = message.get(constants::columns::message::ANSWER).unwrap();
-
-    assert_eq!(&expected, actual);
+            assert_eq!(&expected, actual);
+        },
+    )?;
 
     Ok(())
 }
