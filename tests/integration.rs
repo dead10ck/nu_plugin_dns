@@ -120,16 +120,14 @@ impl TestHarness {
 
     fn plugin_test(
         &self,
-        test_config: Option<nu_protocol::Record>,
-        cmd: impl AsRef<str>,
-        input: Option<PipelineData>,
+        test_case: TestCase,
         expected_resp_code: HickoryResponseCode,
         validate: impl Fn(bool, &nu_protocol::Record),
     ) -> Result<PluginTest, ShellError> {
         let mut test = PluginTest::new(Dns::PLUGIN_NAME, nu_plugin_dns::Dns::new().into()).unwrap();
         let state = test.engine_state_mut();
         let mut config = state.get_config().deref().clone();
-        let plugin_config = Value::test_record(Self::test_plugin_config(test_config));
+        let plugin_config = Value::test_record(Self::test_plugin_config(test_case.config));
 
         config
             .plugins
@@ -146,9 +144,9 @@ impl TestHarness {
             .as_bool()
             .unwrap();
 
-        let input = input.unwrap_or(PipelineData::Empty);
+        let input = test_case.input.unwrap_or(PipelineData::Empty);
         let actual = self.runtime.block_on(async {
-            test.eval_with(cmd.as_ref(), input)?
+            test.eval_with(test_case.cmd.as_ref(), input)?
                 .into_value(Span::test_data())
         })?;
 
@@ -162,6 +160,12 @@ impl TestHarness {
 
         Ok(test)
     }
+}
+
+pub struct TestCase<'c> {
+    pub config: Option<nu_protocol::Record>,
+    pub input: Option<PipelineData>,
+    pub cmd: &'c str,
 }
 
 type HickoryResponseCode = hickory_proto::op::ResponseCode;
@@ -217,9 +221,11 @@ fn a() -> Result<(), ShellError> {
     let name: Name = "nushell.sh.".parse().unwrap();
 
     HARNESS.plugin_test(
-        None,
-        format!("dns query --type a '{name}'"),
-        None,
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{name}'"),
+        },
         HickoryResponseCode::NoError,
         |code, message| {
             let expected = record_values(
