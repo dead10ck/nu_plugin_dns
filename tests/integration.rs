@@ -17,7 +17,7 @@ use nu_plugin_dns::{
     Dns,
 };
 use nu_plugin_test_support::PluginTest;
-use nu_protocol::{record, IntoValue, ShellError, Span, TryIntoValue, Value};
+use nu_protocol::{record, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value};
 use tokio::net::UdpSocket;
 
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
@@ -122,6 +122,7 @@ impl TestHarness {
         &self,
         test_config: Option<nu_protocol::Record>,
         cmd: impl AsRef<str>,
+        input: Option<PipelineData>,
         expected_resp_code: HickoryResponseCode,
         validate: impl Fn(bool, &nu_protocol::Record),
     ) -> Result<PluginTest, ShellError> {
@@ -145,9 +146,11 @@ impl TestHarness {
             .as_bool()
             .unwrap();
 
-        let actual = self
-            .runtime
-            .block_on(async { test.eval(cmd.as_ref())?.into_value(Span::test_data()) })?;
+        let input = input.unwrap_or(PipelineData::Empty);
+        let actual = self.runtime.block_on(async {
+            test.eval_with(cmd.as_ref(), input)?
+                .into_value(Span::test_data())
+        })?;
 
         let mut values = actual.into_list().unwrap();
         assert_eq!(1, values.len());
@@ -216,6 +219,7 @@ fn a() -> Result<(), ShellError> {
     HARNESS.plugin_test(
         None,
         format!("dns query --type a '{name}'"),
+        None,
         HickoryResponseCode::NoError,
         |code, message| {
             let expected = record_values(
