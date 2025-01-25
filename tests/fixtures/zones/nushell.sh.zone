@@ -4,9 +4,9 @@ $TTL 30m
 @   IN          SOA     dns1.registrar-servers.com. hostmaster.registrar-servers.com. (
                                 1677639553 ; Serial
                                 43200      ; Refresh
-                                3600       ; Retry
-                                604800     ; Expire
-                                3601)      ; Minimum TTL
+                                1800       ; Retry
+                                1800       ; Expire
+                                1800)      ; Minimum TTL
 
                 AAAA    2606:50c0:8000::153
                 A       185.199.108.153

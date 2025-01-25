@@ -1,12 +1,12 @@
 use std::{
-    net::{Ipv4Addr, SocketAddrV6},
+    net::SocketAddrV6,
     ops::Deref,
     path::PathBuf,
     str::FromStr,
     sync::{Arc, LazyLock},
 };
 
-use hickory_resolver::{IntoName, Name};
+use hickory_resolver::IntoName;
 use hickory_server::{
     authority::{Catalog, ZoneType},
     store::file::{FileAuthority, FileConfig},
@@ -19,6 +19,8 @@ use nu_plugin_dns::{
 use nu_plugin_test_support::PluginTest;
 use nu_protocol::{record, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value};
 use tokio::net::UdpSocket;
+
+mod query;
 
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
@@ -211,41 +213,4 @@ where
         .collect::<Vec<_>>()
         .try_into_value(Span::unknown())
         .unwrap()
-}
-
-// fn test_dns_query()
-
-#[test]
-fn a() -> Result<(), ShellError> {
-    const TTL: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
-    let name: Name = "nushell.sh.".parse().unwrap();
-
-    HARNESS.plugin_test(
-        TestCase {
-            config: None,
-            input: None,
-            cmd: &format!("dns query --type a '{name}'"),
-        },
-        HickoryResponseCode::NoError,
-        |code, message| {
-            let expected = record_values(
-                code,
-                [
-                    "185.199.108.153",
-                    "185.199.109.153",
-                    "185.199.110.153",
-                    "185.199.111.153",
-                ]
-                .into_iter()
-                .map(|ip| Ipv4Addr::from_str(ip).unwrap())
-                .map(|ip| (name.clone(), TTL, ip)),
-            );
-
-            let actual = message.get(constants::columns::message::ANSWER).unwrap();
-
-            assert_eq!(&expected, actual);
-        },
-    )?;
-
-    Ok(())
 }
