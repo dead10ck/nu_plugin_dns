@@ -162,6 +162,40 @@ pub(crate) fn rr_mx() -> Result<(), ShellError> {
     Ok(())
 }
 
+#[test]
+pub(crate) fn rr_txt() -> Result<(), ShellError> {
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type txt '{}'", *NAME),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [hickory_proto::rr::RData::TXT(
+                    hickory_proto::rr::rdata::TXT::new(vec![
+                        "v=spf1 include:spf.nushell.sh. ?all".into()
+                    ]),
+                )]
+                .into_iter()
+                .map(|txt| (NAME.clone(), THIRTY_MIN, txt)),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+
+            assert_eq!(
+                &expected, actual,
+                "expected:\n{:#?}\n\nactual: {:#?}",
+                expected, actual,
+            );
+        },
+    )?;
+
+    Ok(())
+}
+
 /// A zone with a name exists, but not with the record type in the request. An
 /// empty answer is returned.
 #[test]
