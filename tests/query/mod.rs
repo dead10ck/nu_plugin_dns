@@ -121,6 +121,47 @@ pub(crate) fn rr_ptr() -> Result<(), ShellError> {
     Ok(())
 }
 
+#[test]
+pub(crate) fn rr_mx() -> Result<(), ShellError> {
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type mx '{}'", *NAME),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [
+                    hickory_proto::rr::rdata::MX::new(10, {
+                        let mut name = NAME.clone().prepend_label("mail1").unwrap();
+                        name.set_fqdn(true);
+                        name
+                    }),
+                    hickory_proto::rr::rdata::MX::new(20, {
+                        let mut name = NAME.clone().prepend_label("mail2").unwrap();
+                        name.set_fqdn(true);
+                        name
+                    }),
+                ]
+                .into_iter()
+                .map(|mx| (NAME.clone(), THIRTY_MIN, hickory_proto::rr::RData::MX(mx))),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+
+            assert_eq!(
+                &expected, actual,
+                "expected:\n{:#?}\n\nactual: {:#?}",
+                expected, actual,
+            );
+        },
+    )?;
+
+    Ok(())
+}
+
 /// A zone with a name exists, but not with the record type in the request. An
 /// empty answer is returned.
 #[test]

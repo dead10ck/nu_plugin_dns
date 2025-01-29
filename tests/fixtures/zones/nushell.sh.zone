@@ -17,3 +17,5 @@ $TTL 30m
 ; just for testing
 
                 PTR     ptr
+                MX      10    mail1
+                MX      20    mail2
