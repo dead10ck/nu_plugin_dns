@@ -69,6 +69,7 @@ features = [
 
 [dev-dependencies]
 nu-plugin-test-support = "0.102.0"
+nu-command = "0.102.0"
 tokio = { version = "1.42.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]

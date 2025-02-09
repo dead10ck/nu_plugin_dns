@@ -19,3 +19,6 @@ $TTL 30m
                 MX      10    mail1
                 MX      20    mail2
                 TXT     "v=spf1 include:spf.nushell.sh. ?all"
+caldav          CNAME   nushell.sh.
+cal             CNAME   caldav.nushell.sh.
+_caldav._tcp    SRV     1 5 8080 caldav.nushell.sh.

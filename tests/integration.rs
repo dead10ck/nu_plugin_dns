@@ -17,7 +17,9 @@ use nu_plugin_dns::{
     Dns,
 };
 use nu_plugin_test_support::PluginTest;
-use nu_protocol::{record, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value};
+use nu_protocol::{
+    record, IntoPipelineData, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value,
+};
 use tokio::net::UdpSocket;
 
 mod query;
@@ -127,6 +129,7 @@ impl TestHarness {
         validate: impl Fn(bool, &nu_protocol::Record),
     ) -> Result<PluginTest, ShellError> {
         let mut test = PluginTest::new(Dns::PLUGIN_NAME, nu_plugin_dns::Dns::new().into()).unwrap();
+
         let state = test.engine_state_mut();
         let mut config = state.get_config().deref().clone();
         let plugin_config = Value::test_record(Self::test_plugin_config(test_case.config));
@@ -136,6 +139,10 @@ impl TestHarness {
             .insert(Dns::PLUGIN_NAME.into(), plugin_config);
 
         state.set_config(Arc::new(config));
+
+        // add the table command for debugging
+        test.add_decl(Box::new(nu_command::Table)).unwrap();
+        test.add_decl(Box::new(nu_command::Cd)).unwrap();
 
         let code = test
             .engine_state()
@@ -151,6 +158,23 @@ impl TestHarness {
             test.eval_with(test_case.cmd.as_ref(), input)?
                 .into_value(Span::test_data())
         })?;
+
+        let table = self
+            .runtime
+            .block_on(async {
+                test.eval_with(
+                    // this cd business is necessary because apparently the
+                    // nushell engine for these tests do not set $env.PWD, so
+                    // calling cd first sets it
+                    "let msg = $in; cd .; $msg | table -ew 1000000000",
+                    actual.clone().into_pipeline_data(),
+                )?
+                .into_value(Span::test_data())
+            })?
+            .into_string()
+            .unwrap();
+
+        tracing::debug!("\n{table}");
 
         let mut values = actual.into_list().unwrap();
         assert_eq!(1, values.len());
