@@ -1,36 +1,101 @@
-use std::{net::Ipv6Addr, str::FromStr, sync::LazyLock};
-
-use hickory_resolver::Name;
 use nu_plugin_dns::dns::constants;
 use nu_protocol::{ShellError, Span, Value};
 
 use super::{record_values, HickoryResponseCode, TestCase, HARNESS};
 
-const THIRTY_MIN: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
+mod expected;
 
-static NAME: LazyLock<Name> = LazyLock::new(|| "nushell.sh.".parse().unwrap());
+#[test]
+pub(crate) fn rr_a() -> Result<(), ShellError> {
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{}'", *expected::name::ORIGIN),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, expected::rr::A.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
 
-static EXPECTED_SOA: LazyLock<(Name, chrono::TimeDelta, hickory_proto::rr::RData)> =
-    LazyLock::new(|| {
-        (
-            NAME.clone(),
-            THIRTY_MIN,
-            hickory_proto::rr::RData::SOA(hickory_proto::rr::rdata::SOA::new(
-                "dns1.registrar-servers.com.".parse().unwrap(),
-                "hostmaster.registrar-servers.com.".parse().unwrap(),
-                1677639553,
-                43200,
-                1800,
-                // [FIXME] so there is actually a bug in hickory-server
-                // that parses the zone file such that it uses the
-                // `expire` field of the SOA record as the TTL of the
-                // record itself. Change this to something else in the
-                // future once this is fixed upstream
-                1800,
-                1800,
-            )),
-        )
-    });
+    Ok(())
+}
+
+#[test]
+pub(crate) fn rr_cname() -> Result<(), ShellError> {
+    // querying a cname specifically only returns the cname record
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type cname '{}'", *expected::name::CALDAV),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, expected::rr::CNAME_CALDAV.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    // querying for A on a CNAME returns the CNAME and A records
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{}'", *expected::name::CALDAV),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, expected::rr::CNAME_CALDAV.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+
+            // apparently the A records get put into ADDITIONAL
+            let expected = record_values(code, expected::rr::A.clone());
+            let actual = message
+                .get(constants::columns::message::ADDITIONAL)
+                .unwrap();
+
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    // CNAME chain
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{}'", *expected::name::CAL),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, expected::rr::CNAME_CAL.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+
+            assert_eq!(&expected, actual);
+
+            let expected = record_values(
+                code,
+                expected::rr::CNAME_CALDAV
+                    .clone()
+                    .into_iter()
+                    .chain(expected::rr::A.clone()),
+            );
+
+            let actual = message
+                .get(constants::columns::message::ADDITIONAL)
+                .unwrap();
+
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    Ok(())
+}
 
 #[test]
 pub(crate) fn rr_aaaa() -> Result<(), ShellError> {
@@ -38,20 +103,12 @@ pub(crate) fn rr_aaaa() -> Result<(), ShellError> {
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type aaaa '{}'", *NAME),
+            cmd: &format!("dns query --type aaaa '{}'", *expected::name::ORIGIN),
         },
         HickoryResponseCode::NoError,
         |code, message| {
-            let expected = record_values(
-                code,
-                ["2606:50c0:8000::153"]
-                    .into_iter()
-                    .map(|ip| Ipv6Addr::from_str(ip).unwrap())
-                    .map(|ip| (NAME.clone(), THIRTY_MIN, ip)),
-            );
-
+            let expected = record_values(code, expected::rr::AAAA.clone());
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
-
             assert_eq!(&expected, actual);
         },
     )?;
@@ -65,18 +122,65 @@ pub(crate) fn rr_soa() -> Result<(), ShellError> {
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type soa '{}'", *NAME),
+            cmd: &format!("dns query --type soa '{}'", *expected::name::ORIGIN),
         },
         HickoryResponseCode::NoError,
         |code, message| {
-            let expected = record_values(code, [EXPECTED_SOA.clone()]);
+            let expected = record_values(code, [expected::rr::SOA.clone()]);
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    Ok(())
+}
+
+#[test]
+pub(crate) fn rr_srv() -> Result<(), ShellError> {
+    let mut srv = expected::name::ORIGIN
+        .prepend_label("_tcp")
+        .unwrap()
+        .prepend_label("_caldav")
+        .unwrap();
+
+    srv.set_fqdn(true);
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type srv '{}'", srv),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [hickory_proto::rr::RData::SRV(
+                    hickory_proto::rr::rdata::SRV::new(1, 5, 8080, expected::name::CALDAV.clone()),
+                )]
+                .into_iter()
+                .map(|srv_rr| (srv.clone(), expected::rr::THIRTY_MIN, srv_rr)),
+            );
+
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
-            assert_eq!(
-                &expected, actual,
-                "expected:\n{:#?}\n\nactual: {:#?}",
-                expected, actual,
+            assert_eq!(&expected, actual);
+
+            // let expected = record_values(code, expected_cname.clone().chain(expected::rr::A.clone()));
+            let expected = record_values(
+                code,
+                expected::rr::CNAME_CALDAV
+                    .clone()
+                    .into_iter()
+                    .chain(expected::rr::A.clone())
+                    .chain(expected::rr::AAAA.clone()),
             );
+
+            let actual = message
+                .get(constants::columns::message::ADDITIONAL)
+                .unwrap();
+
+            assert_eq!(&expected, actual);
         },
     )?;
 
@@ -89,20 +193,20 @@ pub(crate) fn rr_ptr() -> Result<(), ShellError> {
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type ptr '{}'", *NAME),
+            cmd: &format!("dns query --type ptr '{}'", *expected::name::ORIGIN),
         },
         HickoryResponseCode::NoError,
         |code, message| {
             let expected = record_values(
                 code,
-                [NAME.clone().prepend_label("ptr").unwrap()]
+                [expected::name::ORIGIN.clone().prepend_label("ptr").unwrap()]
                     .into_iter()
                     .map(|mut ptr_rr| {
                         ptr_rr.set_fqdn(true);
 
                         (
-                            NAME.clone(),
-                            THIRTY_MIN,
+                            expected::name::ORIGIN.clone(),
+                            expected::rr::THIRTY_MIN,
                             hickory_proto::rr::RData::PTR(hickory_proto::rr::rdata::PTR(ptr_rr)),
                         )
                     }),
@@ -110,11 +214,7 @@ pub(crate) fn rr_ptr() -> Result<(), ShellError> {
 
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
-            assert_eq!(
-                &expected, actual,
-                "expected:\n{:#?}\n\nactual: {:#?}",
-                expected, actual,
-            );
+            assert_eq!(&expected, actual);
         },
     )?;
 
@@ -127,7 +227,7 @@ pub(crate) fn rr_mx() -> Result<(), ShellError> {
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type mx '{}'", *NAME),
+            cmd: &format!("dns query --type mx '{}'", *expected::name::ORIGIN),
         },
         HickoryResponseCode::NoError,
         |code, message| {
@@ -135,27 +235,35 @@ pub(crate) fn rr_mx() -> Result<(), ShellError> {
                 code,
                 [
                     hickory_proto::rr::rdata::MX::new(10, {
-                        let mut name = NAME.clone().prepend_label("mail1").unwrap();
+                        let mut name = expected::name::ORIGIN
+                            .clone()
+                            .prepend_label("mail1")
+                            .unwrap();
                         name.set_fqdn(true);
                         name
                     }),
                     hickory_proto::rr::rdata::MX::new(20, {
-                        let mut name = NAME.clone().prepend_label("mail2").unwrap();
+                        let mut name = expected::name::ORIGIN
+                            .clone()
+                            .prepend_label("mail2")
+                            .unwrap();
                         name.set_fqdn(true);
                         name
                     }),
                 ]
                 .into_iter()
-                .map(|mx| (NAME.clone(), THIRTY_MIN, hickory_proto::rr::RData::MX(mx))),
+                .map(|mx| {
+                    (
+                        expected::name::ORIGIN.clone(),
+                        expected::rr::THIRTY_MIN,
+                        hickory_proto::rr::RData::MX(mx),
+                    )
+                }),
             );
 
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
-            assert_eq!(
-                &expected, actual,
-                "expected:\n{:#?}\n\nactual: {:#?}",
-                expected, actual,
-            );
+            assert_eq!(&expected, actual);
         },
     )?;
 
@@ -168,7 +276,7 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type txt '{}'", *NAME),
+            cmd: &format!("dns query --type txt '{}'", *expected::name::ORIGIN),
         },
         HickoryResponseCode::NoError,
         |code, message| {
@@ -180,16 +288,18 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
                     ]),
                 )]
                 .into_iter()
-                .map(|txt| (NAME.clone(), THIRTY_MIN, txt)),
+                .map(|txt| {
+                    (
+                        expected::name::ORIGIN.clone(),
+                        expected::rr::THIRTY_MIN,
+                        txt,
+                    )
+                }),
             );
 
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
-            assert_eq!(
-                &expected, actual,
-                "expected:\n{:#?}\n\nactual: {:#?}",
-                expected, actual,
-            );
+            assert_eq!(&expected, actual);
         },
     )?;
 
@@ -204,11 +314,11 @@ pub(crate) fn empty() -> Result<(), ShellError> {
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type hinfo '{}'", *NAME),
+            cmd: &format!("dns query --type hinfo '{}'", *expected::name::ORIGIN),
         },
         HickoryResponseCode::NoError,
         |code, message| {
-            let expected_soa = record_values(code, [EXPECTED_SOA.clone()]);
+            let expected_soa = record_values(code, [expected::rr::SOA.clone()]);
 
             let expected_answer = Value::list(Vec::new(), Span::unknown());
             let actual_answer = message.get(constants::columns::message::ANSWER).unwrap();
