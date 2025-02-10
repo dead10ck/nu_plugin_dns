@@ -22,3 +22,4 @@ $TTL 30m
 caldav          CNAME   nushell.sh.
 cal             CNAME   caldav.nushell.sh.
 _caldav._tcp    SRV     1 5 8080 caldav.nushell.sh.
+naptr           NAPTR   100 10 "u" "E2U+pstn:tel" "\!^(.*)$\!tel:\\1\!" .
