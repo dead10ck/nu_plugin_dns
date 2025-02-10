@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use hickory_resolver::Name;
 use nu_plugin_dns::dns::constants;
 use nu_protocol::{ShellError, Span, Value};
 
@@ -295,6 +298,44 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
                         txt,
                     )
                 }),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    Ok(())
+}
+
+#[test]
+pub(crate) fn rr_naptr() -> Result<(), ShellError> {
+    let mut naptr = expected::name::ORIGIN.prepend_label("naptr").unwrap();
+    naptr.set_fqdn(true);
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type naptr '{}'", naptr),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [hickory_proto::rr::RData::NAPTR(
+                    hickory_proto::rr::rdata::NAPTR::new(
+                        100,
+                        10,
+                        (*b"u").into(),
+                        (*b"E2U+pstn:tel").into(),
+                        (*br"!^(.*)$!tel:\1!").into(),
+                        Name::from_str(".").unwrap(),
+                    ),
+                )]
+                .into_iter()
+                .map(|rdata| (naptr.clone(), expected::rr::THIRTY_MIN, rdata)),
             );
 
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
