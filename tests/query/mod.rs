@@ -347,6 +347,42 @@ pub(crate) fn rr_naptr() -> Result<(), ShellError> {
     Ok(())
 }
 
+#[test]
+pub(crate) fn rr_cert() -> Result<(), ShellError> {
+    let mut cert = expected::name::ORIGIN.prepend_label("cert").unwrap();
+    cert.set_fqdn(true);
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type cert '{}'", cert),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [hickory_proto::rr::RData::CERT(
+                    hickory_proto::rr::rdata::CERT::new(
+                        hickory_proto::rr::rdata::cert::CertType::PKIX,
+                        12345,
+                        hickory_proto::rr::rdata::cert::Algorithm::RSASHA256,
+                        (*b"foobar").into(),
+                    ),
+                )]
+                .into_iter()
+                .map(|rdata| (cert.clone(), expected::rr::THIRTY_MIN, rdata)),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    Ok(())
+}
+
 /// A zone with a name exists, but not with the record type in the request. An
 /// empty answer is returned.
 #[test]
