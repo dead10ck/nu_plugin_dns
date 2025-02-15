@@ -26,10 +26,10 @@ bench = false
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.31"
-nu-plugin = "0.100.0"
-nu-protocol = "0.100.0"
+nu-plugin = "0.102.0"
+nu-protocol = "0.102.0"
 
-tokio = "1.42.0"
+tokio = "1.43.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
@@ -39,7 +39,7 @@ webpki-roots = "0.25.4"
 tokio-util = { version = "0.7.13", features = ["rt"] }
 
 [dependencies.hickory-resolver]
-version = "0.24.1"
+version = "0.24.3"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
@@ -49,7 +49,7 @@ features = [
 ]
 
 [dependencies.hickory-proto]
-version = "0.24.1"
+version = "0.24.3"
 features = [
   "dnssec-ring",
   "backtrace",
@@ -60,7 +60,7 @@ features = [
 ]
 
 [dependencies.hickory-client]
-version = "0.24.1"
+version = "0.24.3"
 features = [
   "dnssec-ring",
   "backtrace",
