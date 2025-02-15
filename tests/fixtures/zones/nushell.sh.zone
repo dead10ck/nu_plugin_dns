@@ -21,6 +21,13 @@ $TTL 30m
                 TXT     "v=spf1 include:spf.nushell.sh. ?all"
 caldav          CNAME   nushell.sh.
 cal             CNAME   caldav.nushell.sh.
+
+; DNAME not supported by hickory
+; cmds            DNAME   commands.nushell.sh.
+; cd.commands     TXT     "cd"
+; ls.commands     TXT     "ls"
+; rm.commands     TXT     "rm"
+
 _caldav._tcp    SRV     1 5 8080 caldav.nushell.sh.
 naptr           NAPTR   100 10 "u" "E2U+pstn:tel" "\!^(.*)$\!tel:\\1\!" .
 cert            CERT    1 12345 8 "Zm9vYmFy"

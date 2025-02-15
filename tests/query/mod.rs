@@ -101,6 +101,12 @@ pub(crate) fn rr_cname() -> Result<(), ShellError> {
 }
 
 #[test]
+#[ignore = "hickory missing support for dname in zone file parsing"]
+pub(crate) fn rr_dname() -> Result<(), ShellError> {
+    Ok(())
+}
+
+#[test]
 pub(crate) fn rr_aaaa() -> Result<(), ShellError> {
     HARNESS.plugin_test(
         TestCase {
