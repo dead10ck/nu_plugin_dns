@@ -34,12 +34,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
-rustls = "0.23.20"
+rustls = "0.23.23"
 webpki-roots = "0.26.7"
 tokio-util = { version = "0.7.13", features = ["rt"] }
 
 [dependencies.hickory-resolver]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns.git"
+rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
 features = [
   "dnssec-ring",
   "dns-over-rustls",
@@ -48,7 +50,9 @@ features = [
 ]
 
 [dependencies.hickory-proto]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns.git"
+rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
 features = [
   "dnssec-ring",
   "backtrace",
@@ -58,7 +62,9 @@ features = [
 ]
 
 [dependencies.hickory-client]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns.git"
+rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
 features = [
   "dnssec-ring",
   "backtrace",
@@ -73,7 +79,9 @@ nu-command = "0.102.0"
 tokio = { version = "1.42.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
-version = "0.25.0-alpha.4"
+# version = "0.25.0-alpha.4"
+git = "https://github.com/hickory-dns/hickory-dns.git"
+rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
 features = [
   "dnssec-ring",
   "dns-over-rustls",

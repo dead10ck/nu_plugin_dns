@@ -21,6 +21,7 @@ use nu_protocol::{
     record, IntoPipelineData, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value,
 };
 use tokio::net::UdpSocket;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod query;
 
@@ -66,12 +67,14 @@ impl TestHarness {
                 continue;
             }
 
-            let origin = &file_name[..(file_name.len() - Self::ZONE_FILE_EXT.len())]
+            let origin = &file_name[..(file_name.len() - Self::ZONE_FILE_EXT.len() + 1)]
                 .into_name()
                 .unwrap();
 
+            tracing::debug!(?origin);
+
             let file_config = FileConfig {
-                zone_file_path: file_name,
+                zone_file_path: entry.path(),
             };
 
             let authority = FileAuthority::try_from_config(
@@ -107,6 +110,11 @@ impl TestHarness {
     }
 
     fn init_hickory_server(runtime: &tokio::runtime::Runtime) -> ServerFuture<Catalog> {
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         runtime.block_on(async {
             let socket = UdpSocket::bind(
                 Self::TEST_RESOLVER_SOCKET_ADDR

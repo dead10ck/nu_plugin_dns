@@ -10,6 +10,7 @@ use hickory_proto::{
             key::{KeyTrust, KeyUsage},
             DNSSECRData,
         },
+        PublicKey,
     },
     rr::{
         domain,
@@ -648,12 +649,10 @@ impl RData {
             }
             hickory_proto::rr::RData::TLSA(tlsa) => {
                 let cert_usage = match tlsa.cert_usage() {
-                    tlsa::CertUsage::CA => Value::string("CA", Span::unknown()),
-                    tlsa::CertUsage::Service => Value::string("service", Span::unknown()),
-                    tlsa::CertUsage::TrustAnchor => Value::string("trust anchor", Span::unknown()),
-                    tlsa::CertUsage::DomainIssued => {
-                        Value::string("domain issued", Span::unknown())
-                    }
+                    tlsa::CertUsage::PkixTa => Value::string("PKIX-TA", Span::unknown()),
+                    tlsa::CertUsage::PkixEe => Value::string("PKIX-EE", Span::unknown()),
+                    tlsa::CertUsage::DaneTa => Value::string("DANE-TA", Span::unknown()),
+                    tlsa::CertUsage::DaneEe => Value::string("DANE-EE", Span::unknown()),
                     tlsa::CertUsage::Private => Value::string("private", Span::unknown()),
                     tlsa::CertUsage::Unassigned(code) => Value::int(code as i64, Span::unknown()),
                 };
@@ -943,7 +942,6 @@ fn parse_ds<D: Deref<Target = dnssec::rdata::DS>>(ds: D) -> Value {
             dnssec::DigestType::SHA1 => "SHA-1",
             dnssec::DigestType::SHA256 => "SHA-256",
             dnssec::DigestType::SHA384 => "SHA-384",
-            dnssec::DigestType::SHA512 => "SHA-512",
             _ => "unknown",
         }),
         Span::unknown(),
@@ -964,15 +962,24 @@ fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
     let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
     let secure_entry_point = Value::bool(dnskey.secure_entry_point(), Span::unknown());
     let revoke = Value::bool(dnskey.revoke(), Span::unknown());
-    let algorithm = Value::string(dnskey.algorithm().to_string(), Span::unknown());
-    let public_key = Value::binary(dnskey.public_key(), Span::unknown());
+
+    let public_key = dnskey.public_key();
+
+    let algorithm = Value::string(public_key.algorithm().to_string(), Span::unknown());
+    let bytes = Value::binary(public_key.public_bytes(), Span::unknown());
+
     Value::record(
         record![
             "zone_key"           => zone_key,
             "secure_entry_point" => secure_entry_point,
             "revoke"             => revoke,
-            "algorithm"          => algorithm,
-            "public_key"         => public_key,
+            "public_key"         => Value::record(
+                record![
+                    "algorithm" => algorithm,
+                    "bytes" => bytes,
+                ],
+                Span::unknown()
+            ),
         ],
         Span::unknown(),
     )
@@ -1037,9 +1044,7 @@ impl Opt<'_> {
                 };
 
                 let option = match option {
-                    EdnsOption::DAU(supported)
-                    | EdnsOption::DHU(supported)
-                    | EdnsOption::N3U(supported) => Value::list(
+                    EdnsOption::DAU(supported) => Value::list(
                         supported
                             .iter()
                             .map(|alg| Value::string(alg.to_string(), Span::unknown()))

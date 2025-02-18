@@ -140,13 +140,11 @@ pub(crate) fn rr_soa() -> Result<(), ShellError> {
 
 #[test]
 pub(crate) fn rr_srv() -> Result<(), ShellError> {
-    let mut srv = expected::name::ORIGIN
+    let srv = expected::name::ORIGIN
         .prepend_label("_tcp")
         .unwrap()
         .prepend_label("_caldav")
         .unwrap();
-
-    srv.set_fqdn(true);
 
     HARNESS.plugin_test(
         TestCase {
@@ -204,9 +202,7 @@ pub(crate) fn rr_ptr() -> Result<(), ShellError> {
                 code,
                 [expected::name::ORIGIN.clone().prepend_label("ptr").unwrap()]
                     .into_iter()
-                    .map(|mut ptr_rr| {
-                        ptr_rr.set_fqdn(true);
-
+                    .map(|ptr_rr| {
                         (
                             expected::name::ORIGIN.clone(),
                             expected::rr::THIRTY_MIN,
@@ -237,22 +233,20 @@ pub(crate) fn rr_mx() -> Result<(), ShellError> {
             let expected = record_values(
                 code,
                 [
-                    hickory_proto::rr::rdata::MX::new(10, {
-                        let mut name = expected::name::ORIGIN
+                    hickory_proto::rr::rdata::MX::new(
+                        10,
+                        expected::name::ORIGIN
                             .clone()
                             .prepend_label("mail1")
-                            .unwrap();
-                        name.set_fqdn(true);
-                        name
-                    }),
-                    hickory_proto::rr::rdata::MX::new(20, {
-                        let mut name = expected::name::ORIGIN
+                            .unwrap(),
+                    ),
+                    hickory_proto::rr::rdata::MX::new(
+                        20,
+                        expected::name::ORIGIN
                             .clone()
                             .prepend_label("mail2")
-                            .unwrap();
-                        name.set_fqdn(true);
-                        name
-                    }),
+                            .unwrap(),
+                    ),
                 ]
                 .into_iter()
                 .map(|mx| {
@@ -311,8 +305,7 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
 
 #[test]
 pub(crate) fn rr_naptr() -> Result<(), ShellError> {
-    let mut naptr = expected::name::ORIGIN.prepend_label("naptr").unwrap();
-    naptr.set_fqdn(true);
+    let naptr = expected::name::ORIGIN.prepend_label("naptr").unwrap();
 
     HARNESS.plugin_test(
         TestCase {
@@ -349,8 +342,7 @@ pub(crate) fn rr_naptr() -> Result<(), ShellError> {
 
 #[test]
 pub(crate) fn rr_cert() -> Result<(), ShellError> {
-    let mut cert = expected::name::ORIGIN.prepend_label("cert").unwrap();
-    cert.set_fqdn(true);
+    let cert = expected::name::ORIGIN.prepend_label("cert").unwrap();
 
     HARNESS.plugin_test(
         TestCase {
