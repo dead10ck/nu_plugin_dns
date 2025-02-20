@@ -22,6 +22,8 @@ $TTL 30m
 caldav          CNAME   nushell.sh.
 cal             CNAME   caldav.nushell.sh.
 
+acal            ANAME   nushell.sh.
+
 ; DNAME not supported by hickory
 ; cmds            DNAME   commands.nushell.sh.
 ; cd.commands     TXT     "cd"
