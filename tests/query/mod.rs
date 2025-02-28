@@ -47,6 +47,66 @@ pub(crate) fn rr_aaaa() -> Result<(), ShellError> {
 }
 
 #[test]
+pub(crate) fn rr_aname() -> Result<(), ShellError> {
+    let aname = expected::name::ORIGIN.prepend_label("acal").unwrap();
+    let expected_aname_rr = (
+        aname.clone(),
+        expected::rr::THIRTY_MIN,
+        hickory_proto::rr::RData::ANAME(hickory_proto::rr::rdata::ANAME(
+            expected::name::ORIGIN.clone(),
+        )),
+    );
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type aname '{}'", aname),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, [expected_aname_rr.clone()]);
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{}'", aname),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected_answer = record_values(
+                code,
+                expected::rr::A
+                    .clone()
+                    .into_iter()
+                    // ttl of 0 ???
+                    .map(|(_, _, rdata)| (aname.clone(), chrono::TimeDelta::zero(), rdata)),
+            );
+            let actual_answer = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected_answer, actual_answer);
+
+            let expected_additional = record_values(
+                code,
+                [expected_aname_rr.clone()]
+                    .into_iter()
+                    .chain(expected::rr::A.clone()),
+            );
+            let actual_additional = message
+                .get(constants::columns::message::ADDITIONAL)
+                .unwrap();
+            assert_eq!(&expected_additional, actual_additional);
+        },
+    )?;
+
+    Ok(())
+}
+
+#[test]
 pub(crate) fn rr_cert() -> Result<(), ShellError> {
     let cert = expected::name::ORIGIN.prepend_label("cert").unwrap();
 
