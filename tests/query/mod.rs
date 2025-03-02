@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use hickory_resolver::Name;
+use hickory_resolver::{IntoName, Name};
 use nu_plugin_dns::dns::constants;
 use nu_protocol::{ShellError, Span, Value};
 
@@ -100,6 +100,117 @@ pub(crate) fn rr_aname() -> Result<(), ShellError> {
                 .get(constants::columns::message::ADDITIONAL)
                 .unwrap();
             assert_eq!(&expected_additional, actual_additional);
+        },
+    )?;
+
+    Ok(())
+}
+
+#[test]
+pub(crate) fn rr_caa() -> Result<(), ShellError> {
+    let caa_issue = expected::name::ORIGIN
+        .prepend_label("caa")
+        .unwrap()
+        .prepend_label("issue")
+        .unwrap();
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type caa '{}'", caa_issue),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            use hickory_proto::rr::rdata::caa::KeyValue;
+
+            let expected = record_values(
+                code,
+                [hickory_proto::rr::RData::CAA(
+                    hickory_proto::rr::rdata::CAA::new_issue(
+                        true,
+                        Some("dynadot.com".into_name().unwrap()),
+                        vec![KeyValue::new("foo", "bar"), KeyValue::new("baz", "quux")],
+                    ),
+                )]
+                .into_iter()
+                .map(|rdata| (caa_issue.clone(), expected::rr::THIRTY_MIN, rdata)),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    let caa_issuewild = expected::name::ORIGIN
+        .prepend_label("caa")
+        .unwrap()
+        .prepend_label("issuewild")
+        .unwrap();
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type caa '{}'", caa_issuewild),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [
+                    hickory_proto::rr::RData::CAA(hickory_proto::rr::rdata::CAA::new_issuewild(
+                        false,
+                        Some("dynadot.com".into_name().unwrap()),
+                        vec![],
+                    )),
+                    hickory_proto::rr::RData::CAA(hickory_proto::rr::rdata::CAA::new_issuewild(
+                        false,
+                        None,
+                        vec![],
+                    )),
+                ]
+                .into_iter()
+                .map(|rdata| (caa_issuewild.clone(), expected::rr::THIRTY_MIN, rdata)),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    let caa_iodef = expected::name::ORIGIN
+        .prepend_label("caa")
+        .unwrap()
+        .prepend_label("report")
+        .unwrap();
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type caa '{}'", caa_iodef),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(
+                code,
+                [
+                    hickory_proto::rr::RData::CAA(hickory_proto::rr::rdata::CAA::new_iodef(
+                        false,
+                        "mailto:bob@nushell.sh".parse().unwrap(),
+                    )),
+                    hickory_proto::rr::RData::CAA(hickory_proto::rr::rdata::CAA::new_iodef(
+                        false,
+                        "https://nushell.sh/".parse().unwrap(),
+                    )),
+                ]
+                .into_iter()
+                .map(|rdata| (caa_iodef.clone(), expected::rr::THIRTY_MIN, rdata)),
+            );
+
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
         },
     )?;
 
