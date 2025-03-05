@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use hickory_proto::rr::RecordType;
 use hickory_resolver::{IntoName, Name};
 use nu_plugin_dns::dns::constants;
 use nu_protocol::{ShellError, Span, Value};
@@ -264,6 +265,95 @@ pub(crate) fn rr_cname() -> Result<(), ShellError> {
         HickoryResponseCode::NoError,
         |code, message| {
             let expected = record_values(code, expected::rr::CNAME_CALDAV.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    // querying for A on a CNAME returns the CNAME and A records
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{}'", *expected::name::CALDAV),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, expected::rr::CNAME_CALDAV.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+            assert_eq!(&expected, actual);
+
+            // apparently the A records get put into ADDITIONAL
+            let expected = record_values(code, expected::rr::A.clone());
+            let actual = message
+                .get(constants::columns::message::ADDITIONAL)
+                .unwrap();
+
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    // CNAME chain
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type a '{}'", *expected::name::CAL),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            let expected = record_values(code, expected::rr::CNAME_CAL.clone());
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
+
+            assert_eq!(&expected, actual);
+
+            let expected = record_values(
+                code,
+                expected::rr::CNAME_CALDAV
+                    .clone()
+                    .into_iter()
+                    .chain(expected::rr::A.clone()),
+            );
+
+            let actual = message
+                .get(constants::columns::message::ADDITIONAL)
+                .unwrap();
+
+            assert_eq!(&expected, actual);
+        },
+    )?;
+
+    Ok(())
+}
+
+#[test]
+pub(crate) fn rr_csync() -> Result<(), ShellError> {
+    let csync = expected::name::ORIGIN.prepend_label("csync").unwrap();
+
+    HARNESS.plugin_test(
+        TestCase {
+            config: None,
+            input: None,
+            cmd: &format!("dns query --type csync '{}'", csync),
+        },
+        HickoryResponseCode::NoError,
+        |code, message| {
+            // these are encoded in a bitmap, and therefore effectively sorted
+            // by type code
+            let mut types = vec![RecordType::A, RecordType::AAAA, RecordType::NS];
+            types.sort();
+
+            let expected = record_values(
+                code,
+                [(
+                    csync.clone(),
+                    expected::rr::THIRTY_MIN,
+                    hickory_proto::rr::RData::CSYNC(hickory_proto::rr::rdata::CSYNC::new(
+                        42, true, true, types,
+                    )),
+                )],
+            );
+
             let actual = message.get(constants::columns::message::ANSWER).unwrap();
             assert_eq!(&expected, actual);
         },

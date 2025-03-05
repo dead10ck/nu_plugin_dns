@@ -34,8 +34,10 @@ _caldav._tcp    SRV     1 5 8080 caldav.nushell.sh.
 naptr           NAPTR   100 10 "u" "E2U+pstn:tel" "\!^(.*)$\!tel:\\1\!" .
 cert            CERT    1 12345 8 "Zm9vYmFy"
 
-issue.caa          CAA     128 issue      "dynadot.com; foo=bar; baz=quux"
-issuewild.caa      CAA       0 issuewild  "dynadot.com"
-issuewild.caa      CAA       0 issuewild  ";"
-report.caa         CAA       0 iodef      "mailto:bob@nushell.sh"
-report.caa         CAA       0 iodef      "https://nushell.sh/"
+issue.caa        CAA    128 issue      "dynadot.com; foo=bar; baz=quux"
+issuewild.caa    CAA      0 issuewild  "dynadot.com"
+issuewild.caa    CAA      0 issuewild  ";"
+report.caa       CAA      0 iodef      "mailto:bob@nushell.sh"
+report.caa       CAA      0 iodef      "https://nushell.sh/"
+
+csync            CSYNC   42 3          A AAAA NS
