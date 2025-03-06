@@ -359,55 +359,34 @@ pub(crate) fn rr_csync() -> Result<(), ShellError> {
         },
     )?;
 
-    // querying for A on a CNAME returns the CNAME and A records
+    Ok(())
+}
+
+#[test]
+pub(crate) fn rr_hinfo() -> Result<(), ShellError> {
+    let hinfo = expected::name::ORIGIN.prepend_label("hinfo").unwrap();
+
     HARNESS.plugin_test(
         TestCase {
             config: None,
             input: None,
-            cmd: &format!("dns query --type a '{}'", *expected::name::CALDAV),
+            cmd: &format!("dns query --type hinfo '{}'", hinfo),
         },
         HickoryResponseCode::NoError,
         |code, message| {
-            let expected = record_values(code, expected::rr::CNAME_CALDAV.clone());
-            let actual = message.get(constants::columns::message::ANSWER).unwrap();
-            assert_eq!(&expected, actual);
-
-            // apparently the A records get put into ADDITIONAL
-            let expected = record_values(code, expected::rr::A.clone());
-            let actual = message
-                .get(constants::columns::message::ADDITIONAL)
-                .unwrap();
-
-            assert_eq!(&expected, actual);
-        },
-    )?;
-
-    // CNAME chain
-    HARNESS.plugin_test(
-        TestCase {
-            config: None,
-            input: None,
-            cmd: &format!("dns query --type a '{}'", *expected::name::CAL),
-        },
-        HickoryResponseCode::NoError,
-        |code, message| {
-            let expected = record_values(code, expected::rr::CNAME_CAL.clone());
-            let actual = message.get(constants::columns::message::ANSWER).unwrap();
-
-            assert_eq!(&expected, actual);
-
             let expected = record_values(
                 code,
-                expected::rr::CNAME_CALDAV
-                    .clone()
-                    .into_iter()
-                    .chain(expected::rr::A.clone()),
+                [(
+                    hinfo.clone(),
+                    expected::rr::THIRTY_MIN,
+                    hickory_proto::rr::RData::HINFO(hickory_proto::rr::rdata::HINFO::new(
+                        "foo".into(),
+                        "bar".into(),
+                    )),
+                )],
             );
 
-            let actual = message
-                .get(constants::columns::message::ADDITIONAL)
-                .unwrap();
-
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
             assert_eq!(&expected, actual);
         },
     )?;

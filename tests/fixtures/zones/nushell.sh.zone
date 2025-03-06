@@ -40,4 +40,5 @@ issuewild.caa    CAA      0 issuewild  ";"
 report.caa       CAA      0 iodef      "mailto:bob@nushell.sh"
 report.caa       CAA      0 iodef      "https://nushell.sh/"
 
-csync            CSYNC   42 3          A AAAA NS
+csync            CSYNC   42  3         A AAAA NS
+hinfo            HINFO   foo bar
