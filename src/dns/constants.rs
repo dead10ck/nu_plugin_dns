@@ -22,7 +22,7 @@ pub mod config {
         use std::time::Duration;
 
         pub const TASKS: usize = 8;
-        pub const TIMEOUT: Duration = Duration::from_secs(5);
+        pub const TIMEOUT: Duration = Duration::from_secs(30);
     }
 
     pub fn default_port(protocol: Protocol) -> u16 {
