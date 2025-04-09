@@ -175,7 +175,7 @@ impl DnsQuery {
             let config = config.clone();
 
             let resp = async move {
-                let parts = query.0.into_parts();
+                let parts = query.0;
 
                 tracing::info!(query.phase = "start", query.parts = ?parts);
 

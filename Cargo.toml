@@ -43,38 +43,33 @@ webpki-roots = "0.26.7"
 tokio-util = { version = "0.7.13", features = ["rt"] }
 
 [dependencies.hickory-resolver]
-# version = "0.25.0-alpha.4"
-git = "https://github.com/hickory-dns/hickory-dns.git"
-rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "dns-over-rustls",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]
 
 [dependencies.hickory-proto]
-# version = "0.25.0-alpha.4"
-git = "https://github.com/hickory-dns/hickory-dns.git"
-rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "backtrace",
-  "dns-over-rustls",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]
 
 [dependencies.hickory-client]
-# version = "0.25.0-alpha.4"
-git = "https://github.com/hickory-dns/hickory-dns.git"
-rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "backtrace",
-  "dns-over-rustls",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]
 
 [dev-dependencies]
@@ -83,12 +78,11 @@ nu-command = "0.103.0"
 tokio = { version = "1.42.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
-# version = "0.25.0-alpha.4"
-git = "https://github.com/hickory-dns/hickory-dns.git"
-rev = "3f4e5756b5bc3fdad7709a928edab17b62b53e48"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "dns-over-rustls",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]

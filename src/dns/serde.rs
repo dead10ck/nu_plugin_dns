@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::ops::Deref;
 use std::str::FromStr;
 
 use hickory_proto::{
@@ -691,10 +690,116 @@ impl RData {
                 Span::unknown(),
             ),
             hickory_proto::rr::RData::DNSSEC(dnssec) => match dnssec {
-                DNSSECRData::DNSKEY(dnskey) => parse_dnskey(&dnskey),
-                DNSSECRData::CDNSKEY(cdnskey) => parse_dnskey(cdnskey),
-                DNSSECRData::DS(ds) => parse_ds(&ds),
-                DNSSECRData::CDS(cds) => parse_ds(cds),
+                DNSSECRData::DNSKEY(dnskey) => {
+                    let dnskey = &dnskey;
+                    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
+                    let secure_entry_point =
+                        Value::bool(dnskey.secure_entry_point(), Span::unknown());
+                    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
+
+                    let public_key = dnskey.public_key();
+
+                    let algorithm =
+                        Value::string(public_key.algorithm().to_string(), Span::unknown());
+                    let bytes = Value::binary(public_key.public_bytes(), Span::unknown());
+
+                    Value::record(
+                        record![
+                            "zone_key"           => zone_key,
+                            "secure_entry_point" => secure_entry_point,
+                            "revoke"             => revoke,
+                            "public_key"         => Value::record(
+                                record![
+                                    "algorithm" => algorithm,
+                                    "bytes" => bytes,
+                                ],
+                                Span::unknown()
+                            ),
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::CDNSKEY(cdnskey) => {
+                    let zone_key = Value::bool(cdnskey.zone_key(), Span::unknown());
+                    let secure_entry_point =
+                        Value::bool(cdnskey.secure_entry_point(), Span::unknown());
+                    let revoke = Value::bool(cdnskey.revoke(), Span::unknown());
+
+                    let public_key = match cdnskey.public_key() {
+                        Some(public_key) => Value::record(
+                            record![
+                                "algorithm" => Value::string(public_key.algorithm().to_string(), Span::unknown()),
+                                "bytes" => Value::binary(public_key.public_bytes(), Span::unknown()),
+                            ],
+                            Span::unknown(),
+                        ),
+                        None => Value::nothing(Span::unknown()),
+                    };
+
+                    Value::record(
+                        record![
+                            "zone_key"           => zone_key,
+                            "secure_entry_point" => secure_entry_point,
+                            "revoke"             => revoke,
+                            "public_key"         => public_key,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::DS(ds) => {
+                    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
+                    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
+                    let digest_type = match ds.digest_type() {
+                        dnssec::DigestType::SHA1 => Value::string("SHA-1", Span::unknown()),
+                        dnssec::DigestType::SHA256 => Value::string("SHA-256", Span::unknown()),
+                        dnssec::DigestType::SHA384 => Value::string("SHA-384", Span::unknown()),
+                        dnssec::DigestType::Unknown(byte) => {
+                            Value::binary(vec![byte], Span::unknown())
+                        }
+                        _ => Value::string("unknown", Span::unknown()),
+                    };
+
+                    let digest = Value::binary(ds.digest(), Span::unknown());
+                    Value::record(
+                        record![
+                            "key_tag"     => key_tag,
+                            "algorithm"   => algorithm,
+                            "digest_type" => digest_type,
+                            "digest"      => digest,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::CDS(cds) => {
+                    let key_tag = Value::int(cds.key_tag() as i64, Span::unknown());
+
+                    let algorithm = match cds.algorithm() {
+                        Some(alg) => Value::string(alg.to_string(), Span::unknown()),
+                        None => Value::nothing(Span::unknown()),
+                    };
+
+                    let digest_type = Value::string(
+                        Into::<String>::into(match cds.digest_type() {
+                            dnssec::DigestType::SHA1 => "SHA-1",
+                            dnssec::DigestType::SHA256 => "SHA-256",
+                            dnssec::DigestType::SHA384 => "SHA-384",
+                            _ => "unknown",
+                        }),
+                        Span::unknown(),
+                    );
+
+                    let digest = Value::binary(cds.digest(), Span::unknown());
+
+                    Value::record(
+                        record![
+                            "key_tag"     => key_tag,
+                            "algorithm"   => algorithm,
+                            "digest_type" => digest_type,
+                            "digest"      => digest,
+                        ],
+                        Span::unknown(),
+                    )
+                }
                 DNSSECRData::KEY(key) => {
                     let (key_authentication_prohibited, key_confidentiality_prohibited) =
                         match key.key_trust() {
@@ -789,7 +894,6 @@ impl RData {
                         Value::string(nsec.next_domain_name().to_string(), Span::unknown());
                     let types = Value::list(
                         nsec.type_bit_maps()
-                            .iter()
                             .map(|rtype| Value::string(rtype.to_string(), Span::unknown()))
                             .collect(),
                         Span::unknown(),
@@ -818,7 +922,6 @@ impl RData {
                     let types = Value::list(
                         nsec3
                             .type_bit_maps()
-                            .iter()
                             .map(|rtype| Value::string(rtype.to_string(), Span::unknown()))
                             .collect(),
                         Span::unknown(),
@@ -932,57 +1035,6 @@ impl RData {
 
         Ok(val)
     }
-}
-
-fn parse_ds<D: Deref<Target = dnssec::rdata::DS>>(ds: D) -> Value {
-    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
-    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
-    let digest_type = Value::string(
-        Into::<String>::into(match ds.digest_type() {
-            dnssec::DigestType::SHA1 => "SHA-1",
-            dnssec::DigestType::SHA256 => "SHA-256",
-            dnssec::DigestType::SHA384 => "SHA-384",
-            _ => "unknown",
-        }),
-        Span::unknown(),
-    );
-    let digest = Value::binary(ds.digest(), Span::unknown());
-    Value::record(
-        record![
-            "key_tag"     => key_tag,
-            "algorithm"   => algorithm,
-            "digest_type" => digest_type,
-            "digest"      => digest,
-        ],
-        Span::unknown(),
-    )
-}
-
-fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
-    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
-    let secure_entry_point = Value::bool(dnskey.secure_entry_point(), Span::unknown());
-    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
-
-    let public_key = dnskey.public_key();
-
-    let algorithm = Value::string(public_key.algorithm().to_string(), Span::unknown());
-    let bytes = Value::binary(public_key.public_bytes(), Span::unknown());
-
-    Value::record(
-        record![
-            "zone_key"           => zone_key,
-            "secure_entry_point" => secure_entry_point,
-            "revoke"             => revoke,
-            "public_key"         => Value::record(
-                record![
-                    "algorithm" => algorithm,
-                    "bytes" => bytes,
-                ],
-                Span::unknown()
-            ),
-        ],
-        Span::unknown(),
-    )
 }
 
 pub struct Edns(pub hickory_proto::op::Edns);
