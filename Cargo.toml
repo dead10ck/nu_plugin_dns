@@ -86,3 +86,6 @@ features = [
   "quic-ring",
   "h3-ring",
 ]
+
+[workspace.metadata.release]
+allow-branch = ["hickory-0.25"]

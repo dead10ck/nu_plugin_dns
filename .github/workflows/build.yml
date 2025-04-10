@@ -20,5 +20,15 @@ jobs:
       - name: checkout
         uses: actions/checkout@main
 
+      - name: cache cargo
+        id: cache-cargo
+        uses: actions/cache@main
+        with:
+          path: |
+            ~/.cargo
+            ~/.rustup
+            ${{ github.workspace }}/target
+          key: ${{ runner.os }}-cargo
+
       - name: cargo test
         run: cargo test --workspace

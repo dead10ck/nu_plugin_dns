@@ -1,40 +1,91 @@
-name: Release PR
+name: release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Version to release
-        required: true
-        type: string
+      execute:
+        description: --execute
+        type: boolean
+        default: false
+
+      publish:
+        description: publish
+        type: boolean
+        default: true
+
+      release_level:
+        description: level to release
+        type: choice
+        options:
+          - none
+          - major
+          - minor
+          - patch
+          - release
+          - rc
+          - beta
+          - alpha
+        default: release
+
+      dev_level:
+        description: level to bump after release
+        type: choice
+        options:
+          - none
+          - major
+          - minor
+          - patch
+          - release
+          - rc
+          - beta
+          - alpha
+        default: alpha
 
 jobs:
-  make-release-pr:
+  release:
     runs-on: ubuntu-latest
 
     permissions:
-      id-token: write # Enable OIDC
-      pull-requests: write
+      id-token: write
       contents: write
+
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+      EXECUTE: "${{ inputs.execute && '--execute' || '' }}"
 
     steps:
       - name: checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@main
 
-      - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+      - name: cache cargo
+        id: cache-cargo
+        uses: actions/cache@main
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
+          path: |
+            ~/.cargo
+            ~/.rustup
+            ${{ github.workspace }}/target
+          key: ${{ runner.os }}-cargo
 
-      - name: Install cargo-release
-        uses: taiki-e/install-action@v1
-        with:
-          tool: cargo-release
+      - name: install cargo-release
+        id: install-cargo-release
+        run: cargo install cargo-release
 
-      - uses: cargo-bins/release-pr@v2
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          version: ${{ inputs.version }}
+      - name: release version
+        if: ${{ inputs.release_level != 'none' }}
+        run: |
+          cargo release version ${{ inputs.release_level }} ${{ env.EXECUTE }}
+          cargo release commit ${{ env.EXECUTE }}
+          cargo release tag ${{ env.EXECUTE }}
+          cargo release push ${{ env.EXECUTE }}
+
+      - name: publish
+        if: ${{ inputs.publish }}
+        run: |
+          cargo release publish ${{ env.EXECUTE }}
+
+      - name: bump version
+        if: ${{ inputs.dev_level != 'none' }}
+        run: |
+          cargo release version ${{ inputs.dev_level }} ${{ env.EXECUTE }}
+          cargo release commit ${{ env.EXECUTE }}
+          cargo release push ${{ env.EXECUTE }}
