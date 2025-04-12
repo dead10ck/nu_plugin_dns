@@ -1,5 +1,8 @@
 name: release
 on:
+  # push:
+  #   branches:
+  #     - hickory-*
   workflow_dispatch:
     inputs:
       execute:
@@ -56,11 +59,16 @@ jobs:
       - name: checkout
         uses: actions/checkout@main
 
+      - name: get home
+        id: get-home
+        run: 'echo "HOME=$(getent passwd "$USER" | cut -d: -f6)" >> $GITHUB_ENV'
+
       - name: cache cargo
         id: cache-cargo
         uses: actions/cache@main
         with:
           path: |
+            ~/.cache/cargo
             ~/.cargo
             ~/.rustup
             ${{ github.workspace }}/target
@@ -69,11 +77,17 @@ jobs:
       - name: install cargo-release
         id: install-cargo-release
         run: cargo install cargo-release
+        env:
+          CARGO_TARGET_DIR: ${{ env.HOME }}/.cache/cargo/cargo-release
 
       - name: release version
         if: ${{ inputs.release_level != 'none' }}
         run: |
           cargo release version ${{ inputs.release_level }} ${{ env.EXECUTE }}
+
+      - name: release version tag and push
+        if: ${{ inputs.release_level != 'none' && inputs.execute }}
+        run: |
           cargo release commit ${{ env.EXECUTE }}
           cargo release tag ${{ env.EXECUTE }}
           cargo release push ${{ env.EXECUTE }}
@@ -87,5 +101,9 @@ jobs:
         if: ${{ inputs.dev_level != 'none' }}
         run: |
           cargo release version ${{ inputs.dev_level }} ${{ env.EXECUTE }}
+
+      - name: bump version tag and push
+        if: ${{ inputs.dev_level != 'none' && inputs.execute }}
+        run: |
           cargo release commit ${{ env.EXECUTE }}
           cargo release push ${{ env.EXECUTE }}

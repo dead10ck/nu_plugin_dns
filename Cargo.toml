@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 exclude = [ ".github/" ]
 
 [package.metadata.release]
-allow-branch = [ "main" ]
+allow-branch = [ "main", "hickory-0.25" ]
 
 
 [[bin]]
@@ -86,6 +86,3 @@ features = [
   "quic-ring",
   "h3-ring",
 ]
-
-[workspace.metadata.release]
-allow-branch = ["hickory-0.25"]
