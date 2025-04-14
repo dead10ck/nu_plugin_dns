@@ -14,7 +14,7 @@ exclude = [ ".github/" ]
 
 [package.metadata.release]
 allow-branch = [ "main", "hickory-0.25" ]
-
+pre-release-hook = [ "./pre-release" ]
 
 [[bin]]
 name = "nu_plugin_dns"

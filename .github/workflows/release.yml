@@ -76,14 +76,21 @@ jobs:
 
       - name: install cargo-release
         id: install-cargo-release
-        run: cargo install cargo-release
+        run: cargo install cargo-release --locked
         env:
           CARGO_TARGET_DIR: ${{ env.HOME }}/.cache/cargo/cargo-release
+
+      - name: install nushell
+        id: install-nu
+        run: cargo install nu --locked
+        env:
+          CARGO_TARGET_DIR: ${{ env.HOME }}/.cache/cargo/nu
 
       - name: release version
         if: ${{ inputs.release_level != 'none' }}
         run: |
           cargo release version ${{ inputs.release_level }} ${{ env.EXECUTE }}
+          cargo release hook
 
       - name: release version tag and push
         if: ${{ inputs.release_level != 'none' && inputs.execute }}
