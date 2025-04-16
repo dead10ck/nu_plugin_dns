@@ -52,6 +52,7 @@ jobs:
       contents: write
 
     env:
+      CARGO_HOME: ${{ github.workspace }}/.cache/cargo
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
       EXECUTE: "${{ inputs.execute && '--execute' || '' }}"
 
@@ -59,32 +60,38 @@ jobs:
       - name: checkout
         uses: actions/checkout@main
 
-      - name: get home
+      - name: set PATH
         id: get-home
-        run: 'echo "HOME=$(getent passwd "$USER" | cut -d: -f6)" >> $GITHUB_ENV'
+        run: 'echo "PATH=$PATH:$CARGO_HOME/bin" >> $GITHUB_ENV'
 
       - name: cache cargo
-        id: cache-cargo
-        uses: actions/cache@main
+        id: cache-cargo-restore
+        uses: actions/cache/restore@main
         with:
           path: |
-            ~/.cache/cargo
-            ~/.cargo
-            ~/.rustup
+            ${{ github.workspace }}/.cache
             ${{ github.workspace }}/target
-          key: ${{ runner.os }}-cargo
+          key: >-
+            cargo-${{
+              hashFiles(
+                '.cache/cargo/.crates2.json',
+                'target/**/.fingerprint/*/*.json'
+              )
+            }}
+          restore-keys: |
+            cargo-
 
       - name: install cargo-release
         id: install-cargo-release
         run: cargo install cargo-release --locked
         env:
-          CARGO_TARGET_DIR: ${{ env.HOME }}/.cache/cargo/cargo-release
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/cargo-release
 
       - name: install nushell
         id: install-nu
         run: cargo install nu --locked
         env:
-          CARGO_TARGET_DIR: ${{ env.HOME }}/.cache/cargo/nu
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/nu
 
       - name: release version
         if: ${{ inputs.release_level != 'none' }}
@@ -114,3 +121,18 @@ jobs:
         run: |
           cargo release commit ${{ env.EXECUTE }}
           cargo release push ${{ env.EXECUTE }}
+
+      - name: save cargo cache
+        id: cache-cargo-save
+        uses: actions/cache/save@main
+        with:
+          path: |
+            ${{ github.workspace }}/.cache
+            ${{ github.workspace }}/target
+          key: >-
+            cargo-${{
+              hashFiles(
+                '.cache/cargo/.crates2.json',
+                'target/**/.fingerprint/*/*.json'
+              )
+            }}
