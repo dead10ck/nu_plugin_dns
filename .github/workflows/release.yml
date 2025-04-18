@@ -74,6 +74,8 @@ jobs:
           key: >-
             cargo-${{
               hashFiles(
+                'Cargo.toml',
+                'Cargo.lock',
                 '.cache/cargo/.crates2.json',
                 'target/**/.fingerprint/*/*.json'
               )
@@ -132,6 +134,8 @@ jobs:
           key: >-
             cargo-${{
               hashFiles(
+                'Cargo.toml',
+                'Cargo.lock',
                 '.cache/cargo/.crates2.json',
                 'target/**/.fingerprint/*/*.json'
               )
