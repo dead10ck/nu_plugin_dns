@@ -97,9 +97,10 @@ jobs:
 
       - name: release version
         if: ${{ inputs.release_level != 'none' }}
+        env:
+          NU_LOG_LEVEL: debug
         run: |
           cargo release version ${{ inputs.release_level }} ${{ env.EXECUTE }}
-          cargo release hook
 
       - name: release version tag and push
         if: ${{ inputs.release_level != 'none' && inputs.execute }}
