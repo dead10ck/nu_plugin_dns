@@ -33,14 +33,14 @@ futures-util = "0.3.31"
 nu-plugin = "0.103.0"
 nu-protocol = "0.103.0"
 
-tokio = "1.43.0"
+tokio = "1.44.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
-rustls = "0.23.23"
-webpki-roots = "0.26.7"
-tokio-util = { version = "0.7.13", features = ["rt"] }
+rustls = "0.23.26"
+webpki-roots = "0.26.8"
+tokio-util = { version = "0.7.15", features = ["rt"] }
 
 [dependencies.hickory-resolver]
 version = "0.25.1"
@@ -75,7 +75,10 @@ features = [
 [dev-dependencies]
 nu-plugin-test-support = "0.103.0"
 nu-command = "0.103.0"
-tokio = { version = "1.42.0", features = ["fs"] }
+# calamine 0.26.1 was published with a compile error, and nu 0.103.0 depends on
+# it, so we must upgrade it ourselves. Once nu upgrades this, we can remove it.
+calamine = "0.27.0"
+tokio = { version = "1.44.2", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
 version = "0.25.1"
