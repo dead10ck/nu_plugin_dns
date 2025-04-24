@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 exclude = [ ".github/" ]
 
 [package.metadata.release]
-allow-branch = [ "main", "hickory-0.25" ]
+allow-branch = [ "main" ]
 pre-release-hook = [ "./pre-release" ]
 
 [[bin]]
