@@ -54,6 +54,7 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cache/cargo
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+      NU_LOG_LEVEL: info
       EXECUTE: "${{ inputs.execute && '--execute' || '' }}"
 
     steps:
@@ -97,22 +98,20 @@ jobs:
 
       - name: release version
         if: ${{ inputs.release_level != 'none' }}
-        env:
-          NU_LOG_LEVEL: debug
         run: |
-          cargo release version ${{ inputs.release_level }} ${{ env.EXECUTE }}
+          cargo release version --no-confirm ${{ inputs.release_level }} ${{ env.EXECUTE }}
 
       - name: release version tag and push
         if: ${{ inputs.release_level != 'none' && inputs.execute }}
         run: |
-          cargo release commit ${{ env.EXECUTE }}
-          cargo release tag ${{ env.EXECUTE }}
-          cargo release push ${{ env.EXECUTE }}
+          cargo release commit --no-confirm ${{ env.EXECUTE }}
+          cargo release tag --no-confirm ${{ env.EXECUTE }}
+          cargo release push --no-confirm ${{ env.EXECUTE }}
 
       - name: publish
         if: ${{ inputs.publish }}
         run: |
-          cargo release publish ${{ env.EXECUTE }}
+          cargo release publish --no-confirm ${{ env.EXECUTE }}
 
       - name: bump version
         if: ${{ inputs.dev_level != 'none' }}
@@ -122,8 +121,8 @@ jobs:
       - name: bump version tag and push
         if: ${{ inputs.dev_level != 'none' && inputs.execute }}
         run: |
-          cargo release commit ${{ env.EXECUTE }}
-          cargo release push ${{ env.EXECUTE }}
+          cargo release commit --no-confirm ${{ env.EXECUTE }}
+          cargo release push --no-confirm ${{ env.EXECUTE }}
 
       - name: save cargo cache
         id: cache-cargo-save
