@@ -1,0 +1,116 @@
+name: release
+on:
+  # push:
+  #   branches:
+  #     - hickory-*
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: --execute
+        type: boolean
+        default: false
+
+      publish:
+        description: publish
+        type: boolean
+        default: true
+
+      release_level:
+        description: level to release
+        type: choice
+        options:
+          - none
+          - major
+          - minor
+          - patch
+          - release
+          - rc
+          - beta
+          - alpha
+        default: release
+
+      dev_level:
+        description: level to bump after release
+        type: choice
+        options:
+          - none
+          - major
+          - minor
+          - patch
+          - release
+          - rc
+          - beta
+          - alpha
+        default: alpha
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: write
+
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cache/cargo
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+      NU_LOG_LEVEL: info
+      EXECUTE: "${{ inputs.execute && '--execute' || '' }}"
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@main
+
+      - name: setup-cargo-pre
+        uses: ./.github/actions/setup-cargo-pre
+
+      - name: set up git config
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name ${{ secrets.GIT_USER_NAME }}
+          git config user.email ${{ secrets.GIT_EMAIL }}
+
+      - name: install cargo-release
+        id: install-cargo-release
+        run: cargo install cargo-release --locked
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/cargo-release
+
+      - name: install nushell
+        id: install-nu
+        run: cargo install nu --locked
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/nu
+
+      - name: release version
+        if: ${{ inputs.release_level != 'none' }}
+        run: |
+          cargo release version --no-confirm ${{ inputs.release_level }} ${{ env.EXECUTE }}
+          cargo release hook
+
+      - name: release version tag and push
+        if: ${{ inputs.release_level != 'none' && inputs.execute }}
+        run: |
+          cargo release commit --no-confirm ${{ env.EXECUTE }}
+          cargo release tag --no-confirm ${{ env.EXECUTE }}
+          cargo release push --no-confirm ${{ env.EXECUTE }}
+
+      - name: publish
+        if: ${{ inputs.publish }}
+        run: |
+          cargo release publish --no-confirm ${{ env.EXECUTE }}
+
+      - name: bump version
+        if: ${{ inputs.dev_level != 'none' }}
+        run: |
+          cargo release version ${{ inputs.dev_level }} ${{ env.EXECUTE }}
+
+      - name: bump version tag and push
+        if: ${{ inputs.dev_level != 'none' && inputs.execute }}
+        run: |
+          cargo release commit --no-confirm ${{ env.EXECUTE }}
+          cargo release push --no-confirm ${{ env.EXECUTE }}
+
+      - name: setup-cargo-post
+        uses: ./.github/actions/setup-cargo-post

@@ -4,8 +4,11 @@ use std::{
     time::Duration,
 };
 
-use hickory_proto::rr::{DNSClass, RecordType};
-use hickory_resolver::config::{Protocol, ResolverConfig};
+use hickory_proto::{
+    rr::{DNSClass, RecordType},
+    xfer::Protocol,
+};
+use hickory_resolver::config::ResolverConfig;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{record, LabeledError, Span, Spanned, Value};
 

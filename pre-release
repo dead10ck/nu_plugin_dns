@@ -1,0 +1,19 @@
+#!/usr/bin/env nu
+
+use std/log
+
+log info $"pre-release: NEW_VERSION: ($env.NEW_VERSION)"
+
+if $env.NEW_VERSION =~ '-' {
+  log info "pre-release: dev version, no checks"
+  exit 0
+}
+
+let found = open CHANGELOG.md | find $"# [($env.NEW_VERSION)]" | length
+
+if $found == 0 {
+  log info $"pre-release: missing change log entry for version ($env.NEW_VERSION)"
+  exit 1
+}
+
+print "pre-release: checks passed"

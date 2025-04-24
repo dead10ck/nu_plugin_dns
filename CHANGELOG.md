@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2025-04-24
+
+### Changed
+
+#### **BREAKING** Upgrade hickory to 0.25.1
+[hickory 0.25](https://github.com/hickory-dns/hickory-dns/releases/tag/v0.25.0)
+introduced massive breaking changes. The output of this plugin was updated to
+reflect those changes.
+
+* Many breaking changes were made to the data structures of the crate, so
+  without listing all the details, the record types which have changes
+  in their structure are:
+
+  * `CDNSKEY`
+  * `CDS`
+  * `DNSKEY`
+  * `DS`
+  * `KEY`
+  * `TLSA`
+
+  The `edns` record had its `dnssec_ok` column moved into a nested `flags`
+  record.
+* The DNSSEC mode of `strict` has been removed, since hickory now does negative
+  validation. Now in the default mode of `--dnssec opportunistic`, if a record
+  has no DNSSEC signatures, this is cryptographically validated from upstream
+  resolvers, and an error is returned if this validation fails.
+* A new column `proof` has been added to the `answer` table which represents the
+  record's DNSSEC proof status. See
+  [here](https://docs.rs/hickory-proto/0.25.1/hickory_proto/dnssec/proof/enum.Proof.html)
+  for details.
+
+### Other
+* Upgrade nushell crates to 0.103.0
+
 ## [3.0.7] - 2025-02-14
 
 * Upgrade nushell crates to 0.102.0

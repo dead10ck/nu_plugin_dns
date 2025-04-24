@@ -1,0 +1,44 @@
+$ORIGIN nushell.sh.
+$TTL 30m
+
+@   IN          SOA     dns1.registrar-servers.com. hostmaster.registrar-servers.com. (
+                                1677639553 ; Serial
+                                43200      ; Refresh
+                                1800       ; Retry
+                                1800       ; Expire
+                                1800)      ; Minimum TTL
+
+                AAAA    2606:50c0:8000::153
+
+                A       185.199.108.153
+                A       185.199.109.153
+                A       185.199.110.153
+                A       185.199.111.153
+
+                PTR     ptr
+                MX      10    mail1
+                MX      20    mail2
+                TXT     "v=spf1 include:spf.nushell.sh. ?all"
+caldav          CNAME   nushell.sh.
+cal             CNAME   caldav.nushell.sh.
+
+acal            ANAME   nushell.sh.
+
+; DNAME not supported by hickory
+; cmds            DNAME   commands.nushell.sh.
+; cd.commands     TXT     "cd"
+; ls.commands     TXT     "ls"
+; rm.commands     TXT     "rm"
+
+_caldav._tcp    SRV     1 5 8080 caldav.nushell.sh.
+naptr           NAPTR   100 10 "u" "E2U+pstn:tel" "\!^(.*)$\!tel:\\1\!" .
+cert            CERT    1 12345 8 "Zm9vYmFy"
+
+issue.caa        CAA    128 issue      "dynadot.com; foo=bar; baz=quux"
+issuewild.caa    CAA      0 issuewild  "dynadot.com"
+issuewild.caa    CAA      0 issuewild  ";"
+report.caa       CAA      0 iodef      "mailto:bob@nushell.sh"
+report.caa       CAA      0 iodef      "https://nushell.sh/"
+
+csync            CSYNC   42  3         A AAAA NS
+hinfo            HINFO   foo bar

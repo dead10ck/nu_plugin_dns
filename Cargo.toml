@@ -14,7 +14,7 @@ exclude = [ ".github/" ]
 
 [package.metadata.release]
 allow-branch = [ "main" ]
-
+pre-release-hook = [ "./pre-release" ]
 
 [[bin]]
 name = "nu_plugin_dns"
@@ -23,53 +23,69 @@ bench = false
 [lib]
 bench = false
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.31"
-nu-plugin = "0.102.0"
-nu-protocol = "0.102.0"
+nu-plugin = "0.103.0"
+nu-protocol = "0.103.0"
 
-tokio = "1.43.0"
+tokio = "1.44.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
-rustls = "0.21.11"
-webpki-roots = "0.25.4"
-tokio-util = { version = "0.7.13", features = ["rt"] }
+rustls = "0.23.26"
+webpki-roots = "0.26.8"
+tokio-util = { version = "0.7.15", features = ["rt"] }
 
 [dependencies.hickory-resolver]
-version = "0.24.3"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "dns-over-rustls",
-  "dns-over-https",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]
 
 [dependencies.hickory-proto]
-version = "0.24.3"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "backtrace",
-  "dns-over-rustls",
-  "dns-over-https",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]
 
 [dependencies.hickory-client]
-version = "0.24.3"
+version = "0.25.1"
 features = [
   "dnssec-ring",
-  "backtrace",
-  "dns-over-rustls",
-  "dns-over-https",
-  "dns-over-https-rustls",
-  "dns-over-quic",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
 ]
 
-# For termux
-# [patch.crates-io]
-# pwd = { git = "https://gitlab.com/dead10ck/pwd", branch = "termux" }
+[dev-dependencies]
+nu-plugin-test-support = "0.103.0"
+nu-command = "0.103.0"
+# calamine 0.26.1 was published with a compile error, and nu 0.103.0 depends on
+# it, so we must upgrade it ourselves. Once nu upgrades this, we can remove it.
+calamine = "0.27.0"
+tokio = { version = "1.44.2", features = ["fs"] }
+
+[dev-dependencies.hickory-server]
+version = "0.25.1"
+features = [
+  "dnssec-ring",
+  "tls-ring",
+  "https-ring",
+  "quic-ring",
+  "h3-ring",
+]

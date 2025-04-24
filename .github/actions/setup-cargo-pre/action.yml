@@ -1,0 +1,29 @@
+name: setup-cargo-pre
+description: set up caching for cargo and tooling
+
+runs:
+  using: composite
+  steps:
+    - name: add CARGO_HOME to path
+      id: setup-cargo-path
+      shell: bash
+      run: 'echo "PATH=$PATH:$CARGO_HOME/bin" >> $GITHUB_ENV'
+
+    - name: restore cargo cache
+      id: cache-cargo-restore
+      uses: actions/cache/restore@main
+      with:
+        path: |
+          ${{ github.workspace }}/.cache
+          ${{ github.workspace }}/target
+        key: >-
+          cargo-${{
+            hashFiles(
+              'Cargo.toml',
+              'Cargo.lock',
+              '.cache/cargo/.crates2.json',
+              'target/**/.fingerprint/*/*.json'
+            )
+          }}
+        restore-keys: |
+          cargo-

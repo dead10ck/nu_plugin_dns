@@ -1,49 +1,50 @@
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::ops::Deref;
 use std::str::FromStr;
 
-use hickory_client::rr::rdata::key;
-use hickory_client::rr::rdata::DNSSECRData;
-use hickory_proto::error::ProtoError;
-use hickory_proto::rr::dnssec;
-use hickory_proto::rr::rdata::opt::EdnsCode;
-use hickory_proto::rr::rdata::opt::EdnsOption;
-use hickory_proto::rr::rdata::sshfp;
-use hickory_proto::rr::rdata::svcb::EchConfig;
-use hickory_proto::rr::rdata::svcb::IpHint;
-use hickory_proto::rr::rdata::svcb::SvcParamValue;
-use hickory_proto::rr::rdata::svcb::Unknown;
-use hickory_proto::rr::rdata::tlsa;
-use hickory_proto::rr::RecordType;
-use hickory_proto::serialize::binary::BinEncodable;
-use hickory_resolver::Name;
-use nu_protocol::record;
-use nu_protocol::FromValue;
-use nu_protocol::LabeledError;
-use nu_protocol::Span;
-use nu_protocol::Value;
+use hickory_proto::{
+    dnssec::{
+        self,
+        rdata::{
+            key::{KeyTrust, KeyUsage},
+            DNSSECRData,
+        },
+        PublicKey,
+    },
+    rr::{
+        domain,
+        rdata::{
+            opt::{EdnsCode, EdnsOption},
+            sshfp,
+            svcb::{EchConfigList, IpHint, SvcParamValue, Unknown},
+            tlsa,
+        },
+        RecordType,
+    },
+    ProtoError,
+};
+use nu_protocol::{record, FromValue, LabeledError, Span, Value};
 
 use super::config::Config;
 use super::constants;
 
-fn code_to_record_u16<C>(code: C, config: &Config) -> Value
+fn code_to_record_u16<C>(bytes: C, code: bool) -> Value
 where
     C: Display + Into<u16>,
 {
-    let code_string = Value::string(code.to_string(), Span::unknown());
+    let code_string = Value::string(bytes.to_string(), Span::unknown());
 
-    if config.code.item {
+    if code {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
-                    constants::columns::CODE_COLS
+                    constants::columns::rr::code::COLS
                         .iter()
                         .map(|s| String::from(*s)),
                 ),
                 vec![
                     code_string,
-                    Value::int(Into::<u16>::into(code) as i64, Span::unknown()),
+                    Value::int(Into::<u16>::into(bytes) as i64, Span::unknown()),
                 ],
             )),
             Span::unknown(),
@@ -53,23 +54,23 @@ where
     }
 }
 
-fn code_to_record_u8<C>(code: C, config: &Config) -> Value
+fn code_to_record_u8<C>(bytes: C, code: bool) -> Value
 where
     C: Display + Into<u8>,
 {
-    let code_string = Value::string(code.to_string(), Span::unknown());
+    let code_string = Value::string(bytes.to_string(), Span::unknown());
 
-    if config.code.item {
+    if code {
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
                 Vec::from_iter(
-                    constants::columns::CODE_COLS
+                    constants::columns::rr::code::COLS
                         .iter()
                         .map(|s| String::from(*s)),
                 ),
                 vec![
                     code_string,
-                    Value::int(Into::<u8>::into(code) as i64, Span::unknown()),
+                    Value::int(Into::<u8>::into(bytes) as i64, Span::unknown()),
                 ],
             )),
             Span::unknown(),
@@ -79,42 +80,39 @@ where
     }
 }
 
-pub struct Message {
-    msg: hickory_proto::op::Message,
-    bytes: Vec<u8>,
-}
+#[derive(Debug)]
+pub struct Response(hickory_proto::xfer::DnsResponse);
 
-impl Message {
-    pub fn new(msg: hickory_proto::op::Message) -> Self {
-        let bytes = msg.to_bytes().expect("unencodable message");
-        Self { msg, bytes }
+impl Response {
+    pub fn new(msg: hickory_proto::xfer::DnsResponse) -> Self {
+        Self(msg)
     }
 
-    pub fn into_inner(self) -> hickory_proto::op::Message {
-        self.msg
+    pub fn into_inner(self) -> hickory_proto::xfer::DnsResponse {
+        self.0
     }
 
     pub fn size(&self) -> usize {
-        self.bytes.len()
+        self.0.as_buffer().len()
     }
 
-    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
+    pub fn into_value(self, code: bool) -> Result<Value, LabeledError> {
         let size = Value::filesize(self.size() as i64, Span::unknown());
-        let message = self.into_inner();
-        let header = Header(message.header()).into_value(config);
+        let message = self.into_inner().into_message();
+        let header = Header(message.header()).into_value(code);
         let mut parts = message.into_parts();
 
         let question = parts.queries.pop().map_or_else(
             || Value::record(record!(), Span::unknown()),
-            |q| Query(q).into_value(config),
+            |q| Query(q).into_value(code),
         );
 
         let parse_records =
-            |records: Vec<hickory_client::rr::Record>| -> Result<Value, LabeledError> {
+            |records: Vec<hickory_proto::rr::Record>| -> Result<Value, LabeledError> {
                 Ok(Value::list(
                     records
                         .into_iter()
-                        .map(|record| Record(record).into_value(config))
+                        .map(|record| Record(record).into_value(code))
                         .collect::<Result<_, _>>()?,
                     Span::unknown(),
                 ))
@@ -125,12 +123,16 @@ impl Message {
         let additional = parse_records(parts.additionals)?;
         let edns = parts
             .edns
-            .map(|edns| Edns(edns).into_value(config))
+            .map(|edns| Edns(edns).into_value())
             .unwrap_or(Value::nothing(Span::unknown()));
 
         Ok(Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::MESSAGE_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(
+                    constants::columns::message::COLS
+                        .iter()
+                        .map(|s| (*s).into()),
+                ),
                 vec![header, question, answer, authority, additional, edns, size],
             )),
             Span::unknown(),
@@ -138,20 +140,20 @@ impl Message {
     }
 }
 
-pub struct Header<'r>(pub(crate) &'r hickory_proto::op::Header);
+pub struct Header<'r>(pub &'r hickory_proto::op::Header);
 
-impl<'r> Header<'r> {
-    pub fn into_value(self, config: &Config) -> Value {
+impl Header<'_> {
+    pub fn into_value(self, code: bool) -> Value {
         let Header(header) = self;
 
         let id = Value::int(header.id().into(), Span::unknown());
 
         let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
-        let message_type = if config.code.item {
+        let message_type = if code {
             Value::record(
                 nu_protocol::Record::from_iter(std::iter::zip(
                     Vec::from_iter(
-                        constants::columns::CODE_COLS
+                        constants::columns::rr::code::COLS
                             .iter()
                             .map(|s| String::from(*s)),
                     ),
@@ -166,13 +168,13 @@ impl<'r> Header<'r> {
             message_type_string
         };
 
-        let op_code = code_to_record_u8(header.op_code(), config);
+        let op_code = code_to_record_u8(header.op_code(), code);
         let authoritative = Value::bool(header.authoritative(), Span::unknown());
         let truncated = Value::bool(header.truncated(), Span::unknown());
         let recursion_desired = Value::bool(header.recursion_desired(), Span::unknown());
         let recursion_available = Value::bool(header.recursion_available(), Span::unknown());
         let authentic_data = Value::bool(header.authentic_data(), Span::unknown());
-        let response_code = code_to_record_u16(header.response_code(), config);
+        let response_code = code_to_record_u16(header.response_code(), code);
         let query_count = Value::int(header.query_count().into(), Span::unknown());
         let answer_count = Value::int(header.answer_count().into(), Span::unknown());
         let name_server_count = Value::int(header.name_server_count().into(), Span::unknown());
@@ -180,7 +182,11 @@ impl<'r> Header<'r> {
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::HEADER_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(
+                    constants::columns::message::header::COLS
+                        .iter()
+                        .map(|s| (*s).into()),
+                ),
                 vec![
                     id,
                     message_type,
@@ -203,19 +209,23 @@ impl<'r> Header<'r> {
 }
 
 #[derive(Debug)]
-pub struct Query(pub(crate) hickory_proto::op::query::Query);
+pub struct Query(pub hickory_proto::op::query::Query);
 
 impl Query {
-    pub fn into_value(self, config: &Config) -> Value {
+    pub fn into_value(self, code: bool) -> Value {
         let Query(query) = self;
 
         let name = Value::string(query.name().to_utf8(), Span::unknown());
-        let qtype = code_to_record_u16(query.query_type(), config);
-        let class = code_to_record_u16(query.query_class(), config);
+        let qtype = code_to_record_u16(query.query_type(), code);
+        let class = code_to_record_u16(query.query_class(), code);
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::QUERY_COLS.iter().map(|s| (*s).into())),
+                Vec::from_iter(
+                    constants::columns::message::query::COLS
+                        .iter()
+                        .map(|s| (*s).into()),
+                ),
                 vec![name, qtype, class],
             )),
             Span::unknown(),
@@ -238,10 +248,10 @@ impl Query {
                         .with_label(format!("Record must have a column named '{}'", col), span)
                 };
 
-                let name = Name::from_utf8(
+                let name = domain::Name::from_utf8(
                     String::from_value(
-                        rec.get_data_by_key(constants::columns::NAME)
-                            .ok_or_else(|| must_have_col_err(constants::columns::NAME))?,
+                        rec.get_data_by_key(constants::columns::rr::NAME)
+                            .ok_or_else(|| must_have_col_err(constants::columns::rr::NAME))?,
                     )
                     .map_err(|err| {
                         LabeledError::new("invalid value")
@@ -254,12 +264,12 @@ impl Query {
                 })?;
 
                 let qtype = RType::try_from(
-                    &rec.get_data_by_key(constants::columns::TYPE)
-                        .ok_or_else(|| must_have_col_err(constants::columns::TYPE))?,
+                    &rec.get_data_by_key(constants::columns::rr::TYPE)
+                        .ok_or_else(|| must_have_col_err(constants::columns::rr::TYPE))?,
                 )?;
 
                 let class = rec
-                    .get_data_by_key(constants::columns::CLASS)
+                    .get_data_by_key(constants::columns::rr::CLASS)
                     .map(DNSClass::try_from)
                     .unwrap_or(Ok(DNSClass(hickory_proto::rr::DNSClass::IN)))?
                     .0;
@@ -275,7 +285,7 @@ impl Query {
             str_val @ Value::String { val, .. } => {
                 let span = str_val.span();
 
-                let name = Name::from_utf8(val).map_err(|err| {
+                let name = domain::Name::from_utf8(val).map_err(|err| {
                     LabeledError::new("invalid name")
                         .with_label(format!("Error parsing name: {}", err), span)
                 })?;
@@ -316,7 +326,7 @@ impl Query {
 
                 let span = list.span();
 
-                let name = Name::from_labels(
+                let name = domain::Name::from_labels(
                     vals.iter()
                         .map(|val| match val {
                             Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
@@ -363,36 +373,34 @@ impl Query {
     }
 }
 
-pub struct Record(pub(crate) hickory_proto::rr::resource::Record);
+pub struct Record(pub hickory_proto::rr::resource::Record);
 
 impl Record {
-    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
+    pub fn into_value(self, code: bool) -> Result<Value, LabeledError> {
         let Record(record) = self;
         let parts = record.into_parts();
 
         let name = Value::string(parts.name_labels.to_utf8(), Span::unknown());
-        let rtype = code_to_record_u16(parts.rr_type, config);
-        let class = code_to_record_u16(parts.dns_class, config);
+        let rtype = code_to_record_u16(parts.rdata.record_type(), code);
+        let class = code_to_record_u16(parts.dns_class, code);
         let ttl = util::sec_to_duration(parts.ttl);
-        let rdata = match parts.rdata {
-            Some(data) => RData(data).into_value(config)?,
-            None => Value::nothing(Span::unknown()),
-        };
+        let rdata = RData(parts.rdata).into_value()?;
+        let proof = Value::string(parts.proof.to_string().to_lowercase(), Span::unknown());
 
         Ok(Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
-                Vec::from_iter(constants::columns::RECORD_COLS.iter().map(|s| (*s).into())),
-                vec![name, rtype, class, ttl, rdata],
+                Vec::from_iter(constants::columns::rr::COLS.iter().map(|s| (*s).into())),
+                vec![name, rtype, class, ttl, rdata, proof],
             )),
             Span::unknown(),
         ))
     }
 }
 
-pub struct RData(pub(crate) hickory_proto::rr::RData);
+pub struct RData(pub hickory_proto::rr::RData);
 
 impl RData {
-    pub fn into_value(self, config: &Config) -> Result<Value, LabeledError> {
+    pub fn into_value(self) -> Result<Value, LabeledError> {
         let val = match self.0 {
             hickory_proto::rr::RData::CAA(caa) => {
                 let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
@@ -494,7 +502,7 @@ impl RData {
                                 .collect(),
                             Span::unknown(),
                         ),
-                        SvcParamValue::EchConfig(EchConfig(config)) => {
+                        SvcParamValue::EchConfigList(EchConfigList(config)) => {
                             Value::binary(config.clone(), Span::unknown())
                         }
                         SvcParamValue::Ipv6Hint(IpHint(ipv6s)) => Value::list(
@@ -564,7 +572,7 @@ impl RData {
             hickory_proto::rr::RData::OPENPGPKEY(key) => {
                 Value::binary(key.public_key(), Span::unknown())
             }
-            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(config),
+            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(),
             hickory_proto::rr::RData::PTR(name) => Value::string(name.to_string(), Span::unknown()),
 
             hickory_proto::rr::RData::SOA(soa) => {
@@ -640,12 +648,10 @@ impl RData {
             }
             hickory_proto::rr::RData::TLSA(tlsa) => {
                 let cert_usage = match tlsa.cert_usage() {
-                    tlsa::CertUsage::CA => Value::string("CA", Span::unknown()),
-                    tlsa::CertUsage::Service => Value::string("service", Span::unknown()),
-                    tlsa::CertUsage::TrustAnchor => Value::string("trust anchor", Span::unknown()),
-                    tlsa::CertUsage::DomainIssued => {
-                        Value::string("domain issued", Span::unknown())
-                    }
+                    tlsa::CertUsage::PkixTa => Value::string("PKIX-TA", Span::unknown()),
+                    tlsa::CertUsage::PkixEe => Value::string("PKIX-EE", Span::unknown()),
+                    tlsa::CertUsage::DaneTa => Value::string("DANE-TA", Span::unknown()),
+                    tlsa::CertUsage::DaneEe => Value::string("DANE-EE", Span::unknown()),
                     tlsa::CertUsage::Private => Value::string("private", Span::unknown()),
                     tlsa::CertUsage::Unassigned(code) => Value::int(code as i64, Span::unknown()),
                 };
@@ -684,26 +690,132 @@ impl RData {
                 Span::unknown(),
             ),
             hickory_proto::rr::RData::DNSSEC(dnssec) => match dnssec {
-                DNSSECRData::DNSKEY(dnskey) => parse_dnskey(&dnskey),
-                DNSSECRData::CDNSKEY(cdnskey) => parse_dnskey(cdnskey),
-                DNSSECRData::DS(ds) => parse_ds(&ds),
-                DNSSECRData::CDS(cds) => parse_ds(cds),
+                DNSSECRData::DNSKEY(dnskey) => {
+                    let dnskey = &dnskey;
+                    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
+                    let secure_entry_point =
+                        Value::bool(dnskey.secure_entry_point(), Span::unknown());
+                    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
+
+                    let public_key = dnskey.public_key();
+
+                    let algorithm =
+                        Value::string(public_key.algorithm().to_string(), Span::unknown());
+                    let bytes = Value::binary(public_key.public_bytes(), Span::unknown());
+
+                    Value::record(
+                        record![
+                            "zone_key"           => zone_key,
+                            "secure_entry_point" => secure_entry_point,
+                            "revoke"             => revoke,
+                            "public_key"         => Value::record(
+                                record![
+                                    "algorithm" => algorithm,
+                                    "bytes" => bytes,
+                                ],
+                                Span::unknown()
+                            ),
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::CDNSKEY(cdnskey) => {
+                    let zone_key = Value::bool(cdnskey.zone_key(), Span::unknown());
+                    let secure_entry_point =
+                        Value::bool(cdnskey.secure_entry_point(), Span::unknown());
+                    let revoke = Value::bool(cdnskey.revoke(), Span::unknown());
+
+                    let public_key = match cdnskey.public_key() {
+                        Some(public_key) => Value::record(
+                            record![
+                                "algorithm" => Value::string(public_key.algorithm().to_string(), Span::unknown()),
+                                "bytes" => Value::binary(public_key.public_bytes(), Span::unknown()),
+                            ],
+                            Span::unknown(),
+                        ),
+                        None => Value::nothing(Span::unknown()),
+                    };
+
+                    Value::record(
+                        record![
+                            "zone_key"           => zone_key,
+                            "secure_entry_point" => secure_entry_point,
+                            "revoke"             => revoke,
+                            "public_key"         => public_key,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::DS(ds) => {
+                    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
+                    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
+                    let digest_type = match ds.digest_type() {
+                        dnssec::DigestType::SHA1 => Value::string("SHA-1", Span::unknown()),
+                        dnssec::DigestType::SHA256 => Value::string("SHA-256", Span::unknown()),
+                        dnssec::DigestType::SHA384 => Value::string("SHA-384", Span::unknown()),
+                        dnssec::DigestType::Unknown(byte) => {
+                            Value::binary(vec![byte], Span::unknown())
+                        }
+                        _ => Value::string("unknown", Span::unknown()),
+                    };
+
+                    let digest = Value::binary(ds.digest(), Span::unknown());
+                    Value::record(
+                        record![
+                            "key_tag"     => key_tag,
+                            "algorithm"   => algorithm,
+                            "digest_type" => digest_type,
+                            "digest"      => digest,
+                        ],
+                        Span::unknown(),
+                    )
+                }
+                DNSSECRData::CDS(cds) => {
+                    let key_tag = Value::int(cds.key_tag() as i64, Span::unknown());
+
+                    let algorithm = match cds.algorithm() {
+                        Some(alg) => Value::string(alg.to_string(), Span::unknown()),
+                        None => Value::nothing(Span::unknown()),
+                    };
+
+                    let digest_type = Value::string(
+                        Into::<String>::into(match cds.digest_type() {
+                            dnssec::DigestType::SHA1 => "SHA-1",
+                            dnssec::DigestType::SHA256 => "SHA-256",
+                            dnssec::DigestType::SHA384 => "SHA-384",
+                            _ => "unknown",
+                        }),
+                        Span::unknown(),
+                    );
+
+                    let digest = Value::binary(cds.digest(), Span::unknown());
+
+                    Value::record(
+                        record![
+                            "key_tag"     => key_tag,
+                            "algorithm"   => algorithm,
+                            "digest_type" => digest_type,
+                            "digest"      => digest,
+                        ],
+                        Span::unknown(),
+                    )
+                }
                 DNSSECRData::KEY(key) => {
                     let (key_authentication_prohibited, key_confidentiality_prohibited) =
                         match key.key_trust() {
-                            key::KeyTrust::NotAuth => (
+                            KeyTrust::NotAuth => (
                                 Value::bool(true, Span::unknown()),
                                 Value::bool(false, Span::unknown()),
                             ),
-                            key::KeyTrust::NotPrivate => (
+                            KeyTrust::NotPrivate => (
                                 Value::bool(false, Span::unknown()),
                                 Value::bool(true, Span::unknown()),
                             ),
-                            key::KeyTrust::AuthOrPrivate => (
+                            KeyTrust::AuthOrPrivate => (
                                 Value::bool(false, Span::unknown()),
                                 Value::bool(false, Span::unknown()),
                             ),
-                            key::KeyTrust::DoNotTrust => (
+                            KeyTrust::DoNotTrust => (
                                 Value::bool(true, Span::unknown()),
                                 Value::bool(true, Span::unknown()),
                             ),
@@ -719,11 +831,11 @@ impl RData {
 
                     let key_name_type = Value::string(
                         Into::<String>::into(match key.key_usage() {
-                            key::KeyUsage::Host => "host",
+                            KeyUsage::Host => "host",
                             #[allow(deprecated)]
-                            key::KeyUsage::Zone => "zone",
-                            key::KeyUsage::Entity => "entity",
-                            key::KeyUsage::Reserved => "reserved",
+                            KeyUsage::Zone => "zone",
+                            KeyUsage::Entity => "entity",
+                            KeyUsage::Reserved => "reserved",
                         }),
                         Span::unknown(),
                     );
@@ -743,13 +855,23 @@ impl RData {
 
                     #[allow(deprecated)]
                     let protocol = match key.protocol() {
-                        key::Protocol::Reserved => Value::string("RESERVED", Span::unknown()),
-                        key::Protocol::TLS => Value::string("TLS", Span::unknown()),
-                        key::Protocol::Email => Value::string("EMAIL", Span::unknown()),
-                        key::Protocol::DNSSEC => Value::string("DNSSEC", Span::unknown()),
-                        key::Protocol::IPSec => Value::string("IPSEC", Span::unknown()),
-                        key::Protocol::Other(code) => Value::int(code as i64, Span::unknown()),
-                        key::Protocol::All => Value::string("ALL", Span::unknown()),
+                        dnssec::rdata::key::Protocol::Reserved => {
+                            Value::string("RESERVED", Span::unknown())
+                        }
+                        dnssec::rdata::key::Protocol::TLS => Value::string("TLS", Span::unknown()),
+                        dnssec::rdata::key::Protocol::Email => {
+                            Value::string("EMAIL", Span::unknown())
+                        }
+                        dnssec::rdata::key::Protocol::DNSSEC => {
+                            Value::string("DNSSEC", Span::unknown())
+                        }
+                        dnssec::rdata::key::Protocol::IPSec => {
+                            Value::string("IPSEC", Span::unknown())
+                        }
+                        dnssec::rdata::key::Protocol::Other(code) => {
+                            Value::int(code as i64, Span::unknown())
+                        }
+                        dnssec::rdata::key::Protocol::All => Value::string("ALL", Span::unknown()),
                     };
 
                     let algorithm = Value::string(key.algorithm().to_string(), Span::unknown());
@@ -772,7 +894,6 @@ impl RData {
                         Value::string(nsec.next_domain_name().to_string(), Span::unknown());
                     let types = Value::list(
                         nsec.type_bit_maps()
-                            .iter()
                             .map(|rtype| Value::string(rtype.to_string(), Span::unknown()))
                             .collect(),
                         Span::unknown(),
@@ -801,7 +922,6 @@ impl RData {
                     let types = Value::list(
                         nsec3
                             .type_bit_maps()
-                            .iter()
                             .map(|rtype| Value::string(rtype.to_string(), Span::unknown()))
                             .collect(),
                         Span::unknown(),
@@ -848,8 +968,10 @@ impl RData {
                     let algorithm = Value::string(sig.algorithm().to_string(), Span::unknown());
                     let num_labels = Value::int(sig.num_labels() as i64, Span::unknown());
                     let original_ttl = util::sec_to_duration(sig.original_ttl());
-                    let sig_expiration = util::sec_to_date(sig.sig_expiration(), Span::unknown())?;
-                    let sig_inception = util::sec_to_date(sig.sig_inception(), Span::unknown())?;
+                    let sig_expiration =
+                        util::sec_to_date(sig.sig_expiration().get(), Span::unknown())?;
+                    let sig_inception =
+                        util::sec_to_date(sig.sig_inception().get(), Span::unknown())?;
                     let key_tag = Value::int(sig.key_tag() as i64, Span::unknown());
                     let signer_name = Value::string(sig.signer_name().to_string(), Span::unknown());
                     let sig = Value::binary(sig.sig(), Span::unknown());
@@ -915,67 +1037,29 @@ impl RData {
     }
 }
 
-fn parse_ds<D: Deref<Target = dnssec::rdata::DS>>(ds: D) -> Value {
-    let key_tag = Value::int(ds.key_tag() as i64, Span::unknown());
-    let algorithm = Value::string(ds.algorithm().to_string(), Span::unknown());
-    let digest_type = Value::string(
-        Into::<String>::into(match ds.digest_type() {
-            dnssec::DigestType::SHA1 => "SHA-1",
-            dnssec::DigestType::SHA256 => "SHA-256",
-            dnssec::DigestType::GOSTR34_11_94 => "GOST R 34.11-94",
-            dnssec::DigestType::SHA384 => "SHA-384",
-            dnssec::DigestType::SHA512 => "SHA-512",
-            dnssec::DigestType::ED25519 => "ED25519",
-            _ => "unknown",
-        }),
-        Span::unknown(),
-    );
-    let digest = Value::binary(ds.digest(), Span::unknown());
-    Value::record(
-        record![
-            "key_tag"     => key_tag,
-            "algorithm"   => algorithm,
-            "digest_type" => digest_type,
-            "digest"      => digest,
-        ],
-        Span::unknown(),
-    )
-}
-
-fn parse_dnskey<D: Deref<Target = dnssec::rdata::DNSKEY>>(dnskey: D) -> Value {
-    let zone_key = Value::bool(dnskey.zone_key(), Span::unknown());
-    let secure_entry_point = Value::bool(dnskey.secure_entry_point(), Span::unknown());
-    let revoke = Value::bool(dnskey.revoke(), Span::unknown());
-    let algorithm = Value::string(dnskey.algorithm().to_string(), Span::unknown());
-    let public_key = Value::binary(dnskey.public_key(), Span::unknown());
-    Value::record(
-        record![
-            "zone_key"           => zone_key,
-            "secure_entry_point" => secure_entry_point,
-            "revoke"             => revoke,
-            "algorithm"          => algorithm,
-            "public_key"         => public_key,
-        ],
-        Span::unknown(),
-    )
-}
-
-pub struct Edns(pub(crate) hickory_proto::op::Edns);
+pub struct Edns(pub hickory_proto::op::Edns);
 
 impl Edns {
-    pub fn into_value(self, config: &Config) -> Value {
+    pub fn into_value(self) -> Value {
         let edns = self.0;
         let rcode_high = Value::int(edns.rcode_high() as i64, Span::unknown());
         let version = Value::int(edns.version() as i64, Span::unknown());
-        let dnssec_ok = Value::bool(edns.dnssec_ok(), Span::unknown());
+
+        let flags = Value::record(
+            record![
+                "dnssec_ok" => Value::bool(edns.flags().dnssec_ok, Span::unknown()),
+            ],
+            Span::unknown(),
+        );
+
         let max_payload = Value::filesize(edns.max_payload() as i64, Span::unknown());
-        let opts = Opt(edns.options()).into_value(config);
+        let opts = Opt(edns.options()).into_value();
 
         Value::record(
             record![
                 "rcode_high"  => rcode_high,
                 "version"     => version,
-                "dnssec_ok"   => dnssec_ok,
+                "flags"       => flags,
                 "max_payload" => max_payload,
                 "opts"        => opts,
             ],
@@ -984,10 +1068,10 @@ impl Edns {
     }
 }
 
-pub struct Opt<'o>(pub(crate) &'o hickory_proto::rr::rdata::OPT);
+pub struct Opt<'o>(pub &'o hickory_proto::rr::rdata::OPT);
 
-impl<'o> Opt<'o> {
-    pub fn into_value(self, _config: &Config) -> Value {
+impl Opt<'_> {
+    pub fn into_value(self) -> Value {
         let opts: HashMap<_, _> = self
             .0
             .as_ref()
@@ -1012,9 +1096,7 @@ impl<'o> Opt<'o> {
                 };
 
                 let option = match option {
-                    EdnsOption::DAU(supported)
-                    | EdnsOption::DHU(supported)
-                    | EdnsOption::N3U(supported) => Value::list(
+                    EdnsOption::DAU(supported) => Value::list(
                         supported
                             .iter()
                             .map(|alg| Value::string(alg.to_string(), Span::unknown()))
@@ -1039,7 +1121,7 @@ impl<'o> Opt<'o> {
     }
 }
 
-pub struct RType(pub(crate) hickory_proto::rr::RecordType);
+pub struct RType(pub hickory_proto::rr::RecordType);
 
 impl TryFrom<&Value> for RType {
     type Error = LabeledError;
@@ -1075,7 +1157,7 @@ impl TryFrom<&Value> for RType {
     }
 }
 
-pub struct DNSClass(pub(crate) hickory_proto::rr::DNSClass);
+pub struct DNSClass(pub hickory_proto::rr::DNSClass);
 
 impl TryFrom<Value> for DNSClass {
     type Error = LabeledError;
@@ -1104,7 +1186,7 @@ impl TryFrom<Value> for DNSClass {
     }
 }
 
-pub struct Protocol(pub(crate) hickory_resolver::config::Protocol);
+pub struct Protocol(pub hickory_proto::xfer::Protocol);
 
 impl TryFrom<Value> for Protocol {
     type Error = LabeledError;
@@ -1112,11 +1194,11 @@ impl TryFrom<Value> for Protocol {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         let result = match value {
             Value::String { .. } => match value.as_str().unwrap().to_uppercase().as_str() {
-                "UDP" => Protocol(hickory_resolver::config::Protocol::Udp),
-                "TCP" => Protocol(hickory_resolver::config::Protocol::Tcp),
-                "TLS" => Protocol(hickory_resolver::config::Protocol::Tls),
-                "HTTPS" => Protocol(hickory_resolver::config::Protocol::Https),
-                "QUIC" => Protocol(hickory_resolver::config::Protocol::Quic),
+                "UDP" => Protocol(hickory_proto::xfer::Protocol::Udp),
+                "TCP" => Protocol(hickory_proto::xfer::Protocol::Tcp),
+                "TLS" => Protocol(hickory_proto::xfer::Protocol::Tls),
+                "HTTPS" => Protocol(hickory_proto::xfer::Protocol::Https),
+                "QUIC" => Protocol(hickory_proto::xfer::Protocol::Quic),
                 proto => {
                     return Err(LabeledError::new("invalid protocol").with_label(
                         format!("Invalid or unsupported protocol: {proto}"),
@@ -1137,7 +1219,6 @@ impl TryFrom<Value> for Protocol {
 #[derive(Debug, Default, PartialEq)]
 pub enum DnssecMode {
     None,
-    Strict,
 
     #[default]
     Opportunistic,
@@ -1150,11 +1231,10 @@ impl TryFrom<Value> for DnssecMode {
         match value {
             Value::String { .. } => Ok(match value.as_str().unwrap().to_uppercase().as_str() {
                 "NONE" => DnssecMode::None,
-                "STRICT" => DnssecMode::Strict,
                 "OPPORTUNISTIC" => DnssecMode::Opportunistic,
                 _ => {
                     return Err(LabeledError::new("invalid DNSSEC mode").with_label(
-                        "Invalid DNSSEC mode. Must be one of: none, strict, opportunistic",
+                        "Invalid DNSSEC mode. Must be one of: none, opportunistic",
                         value.span(),
                     ));
                 }
