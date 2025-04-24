@@ -30,3 +30,4 @@ jobs:
 
       - name: setup-cargo-post
         uses: ./.github/actions/setup-cargo-post
+        if: always()

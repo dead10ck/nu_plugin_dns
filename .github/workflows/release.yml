@@ -34,10 +34,6 @@ on:
         type: choice
         options:
           - none
-          - major
-          - minor
-          - patch
-          - release
           - rc
           - beta
           - alpha
@@ -104,13 +100,14 @@ jobs:
       - name: bump version
         if: ${{ inputs.dev_level != 'none' }}
         run: |
-          cargo release version ${{ inputs.dev_level }} ${{ env.EXECUTE }}
+          cargo release version --no-confirm ${{ inputs.dev_level }} ${{ env.EXECUTE }}
 
       - name: bump version tag and push
         if: ${{ inputs.dev_level != 'none' && inputs.execute }}
         run: |
           cargo release commit --no-confirm ${{ env.EXECUTE }}
-          cargo release push --no-confirm ${{ env.EXECUTE }}
+          cargo release push --no-tag --no-confirm ${{ env.EXECUTE }}
 
       - name: setup-cargo-post
         uses: ./.github/actions/setup-cargo-post
+        if: always()
