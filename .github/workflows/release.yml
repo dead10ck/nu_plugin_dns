@@ -61,35 +61,15 @@ jobs:
       - name: checkout
         uses: actions/checkout@main
 
+      - name: setup-cargo-pre
+        uses: ./.github/actions/setup-cargo-pre
+
       - name: set up git config
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name ${{ secrets.GIT_USER_NAME }}
           git config user.email ${{ secrets.GIT_EMAIL }}
-
-      - name: set PATH
-        id: get-home
-        run: 'echo "PATH=$PATH:$CARGO_HOME/bin" >> $GITHUB_ENV'
-
-      - name: cache cargo
-        id: cache-cargo-restore
-        uses: actions/cache/restore@main
-        with:
-          path: |
-            ${{ github.workspace }}/.cache
-            ${{ github.workspace }}/target
-          key: >-
-            cargo-${{
-              hashFiles(
-                'Cargo.toml',
-                'Cargo.lock',
-                '.cache/cargo/.crates2.json',
-                'target/**/.fingerprint/*/*.json'
-              )
-            }}
-          restore-keys: |
-            cargo-
 
       - name: install cargo-release
         id: install-cargo-release
@@ -132,19 +112,5 @@ jobs:
           cargo release commit --no-confirm ${{ env.EXECUTE }}
           cargo release push --no-confirm ${{ env.EXECUTE }}
 
-      - name: save cargo cache
-        id: cache-cargo-save
-        uses: actions/cache/save@main
-        with:
-          path: |
-            ${{ github.workspace }}/.cache
-            ${{ github.workspace }}/target
-          key: >-
-            cargo-${{
-              hashFiles(
-                'Cargo.toml',
-                'Cargo.lock',
-                '.cache/cargo/.crates2.json',
-                'target/**/.fingerprint/*/*.json'
-              )
-            }}
+      - name: setup-cargo-post
+        uses: ./.github/actions/setup-cargo-post

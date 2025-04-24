@@ -1,0 +1,22 @@
+name: setup-cargo-post
+description: post run cargo steps
+
+runs:
+  using: composite
+  steps:
+    - name: save cargo cache
+      id: cache-cargo-save
+      uses: actions/cache/save@main
+      with:
+        path: |
+          ${{ github.workspace }}/.cache
+          ${{ github.workspace }}/target
+        key: >-
+          cargo-${{
+            hashFiles(
+              'Cargo.toml',
+              'Cargo.lock',
+              '.cache/cargo/.crates2.json',
+              'target/**/.fingerprint/*/*.json'
+            )
+          }}
