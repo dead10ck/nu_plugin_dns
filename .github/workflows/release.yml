@@ -61,6 +61,13 @@ jobs:
       - name: checkout
         uses: actions/checkout@main
 
+      - name: set up git config
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name ${{ secrets.GIT_USER_NAME }}
+          git config user.email ${{ secrets.GIT_EMAIL }}
+
       - name: set PATH
         id: get-home
         run: 'echo "PATH=$PATH:$CARGO_HOME/bin" >> $GITHUB_ENV'
@@ -100,6 +107,7 @@ jobs:
         if: ${{ inputs.release_level != 'none' }}
         run: |
           cargo release version --no-confirm ${{ inputs.release_level }} ${{ env.EXECUTE }}
+          cargo release hook
 
       - name: release version tag and push
         if: ${{ inputs.release_level != 'none' && inputs.execute }}
