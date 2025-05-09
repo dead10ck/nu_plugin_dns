@@ -30,20 +30,20 @@ lto = "thin"
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.31"
-nu-plugin = "0.103.0"
-nu-protocol = "0.103.0"
+nu-plugin = "0.104.0"
+nu-protocol = "0.104.0"
 
-tokio = "1.44.2"
+tokio = "1.45.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
-rustls = "0.23.26"
-webpki-roots = "0.26.8"
+rustls = "0.23.27"
+webpki-roots = "1.0.0"
 tokio-util = { version = "0.7.15", features = ["rt"] }
 
 [dependencies.hickory-resolver]
-version = "0.25.1"
+version = "0.25.2"
 features = [
   "dnssec-ring",
   "tls-ring",
@@ -53,7 +53,7 @@ features = [
 ]
 
 [dependencies.hickory-proto]
-version = "0.25.1"
+version = "0.25.2"
 features = [
   "dnssec-ring",
   "tls-ring",
@@ -63,7 +63,7 @@ features = [
 ]
 
 [dependencies.hickory-client]
-version = "0.25.1"
+version = "0.25.2"
 features = [
   "dnssec-ring",
   "tls-ring",
@@ -73,15 +73,15 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.103.0"
-nu-command = "0.103.0"
+nu-plugin-test-support = "0.104.0"
+nu-command = "0.104.0"
 # calamine 0.26.1 was published with a compile error, and nu 0.103.0 depends on
 # it, so we must upgrade it ourselves. Once nu upgrades this, we can remove it.
 calamine = "0.27.0"
-tokio = { version = "1.44.2", features = ["fs"] }
+tokio = { version = "1.45.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
-version = "0.25.1"
+version = "0.25.2"
 features = [
   "dnssec-ring",
   "tls-ring",
