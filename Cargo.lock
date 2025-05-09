@@ -2664,7 +2664,7 @@ dependencies = [
 
 [[package]]
 name = "nu_plugin_dns"
-version = "4.0.1-alpha.1"
+version = "4.0.1"
 dependencies = [
  "calamine",
  "chrono",
