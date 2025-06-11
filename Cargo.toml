@@ -30,10 +30,10 @@ lto = "thin"
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.31"
-nu-plugin = "0.104.0"
-nu-protocol = "0.104.0"
+nu-plugin = "0.105.1"
+nu-protocol = "0.105.1"
 
-tokio = "1.45.0"
+tokio = "1.45.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
@@ -73,12 +73,9 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.104.0"
-nu-command = "0.104.0"
-# calamine 0.26.1 was published with a compile error, and nu 0.103.0 depends on
-# it, so we must upgrade it ourselves. Once nu upgrades this, we can remove it.
-calamine = "0.27.0"
-tokio = { version = "1.45.0", features = ["fs"] }
+nu-plugin-test-support = "0.105.1"
+nu-command = "0.105.1"
+tokio = { version = "1.45.1", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
 version = "0.25.2"
