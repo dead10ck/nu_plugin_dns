@@ -30,17 +30,17 @@ lto = "thin"
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.31"
-nu-plugin = "0.107.0"
-nu-protocol = "0.107.0"
+nu-plugin = "0.108.0"
+nu-protocol = "0.108.0"
 
-tokio = "1.47.1"
+tokio = "1.48.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 # rustls and webpki must keep in lockstep with hickory
 # [NOTE] nushell 0.107.0 has a dependency on =0.23.28
 rustls = "0.23.28"
-webpki-roots = "1.0.2"
+webpki-roots = "1.0.3"
 tokio-util = { version = "0.7.16", features = ["rt"] }
 
 [dependencies.hickory-resolver]
@@ -74,9 +74,9 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.107.0"
-nu-command = "0.107.0"
-tokio = { version = "1.47.1", features = ["fs"] }
+nu-plugin-test-support = "0.108.0"
+nu-command = "0.108.0"
+tokio = { version = "1.48.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
 version = "0.25.2"

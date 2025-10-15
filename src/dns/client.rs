@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 use super::{config::Config, serde::DnssecMode};
 
 type DnsHandleResponse =
-    Pin<Box<(dyn Stream<Item = Result<DnsResponse, ProtoError>> + Send + 'static)>>;
+    Pin<Box<dyn Stream<Item = Result<DnsResponse, ProtoError>> + Send + 'static>>;
 pub(crate) type BgHandle = JoinHandle<Result<(), ProtoError>>;
 
 #[derive(Clone)]

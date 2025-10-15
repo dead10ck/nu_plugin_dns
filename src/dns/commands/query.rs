@@ -419,7 +419,7 @@ impl PluginCommand for DnsQuery {
             )
     }
 
-    fn examples(&self) -> Vec<nu_protocol::Example> {
+    fn examples(&'_ self) -> Vec<nu_protocol::Example<'_>> {
         vec![
             Example {
                 example: "dns query google.com",
