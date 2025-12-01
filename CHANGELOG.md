@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.5] - 2025-12-01
+
+* Upgrade nushell to 0.109.0 + other deps
+
 ## [4.0.5] - 2025-10-15
 
 * Upgrade nushell to 0.108.0 + other deps
