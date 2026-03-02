@@ -405,42 +405,44 @@ impl RData {
             hickory_proto::rr::RData::CAA(caa) => {
                 let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
                 let tag = Value::string(caa.tag().as_str(), Span::unknown());
-                let value = match caa.value() {
-                    hickory_proto::rr::rdata::caa::Value::Issuer(issuer_name, key_values) => {
-                        let issuer_name = issuer_name
-                            .as_ref()
-                            .map(|name| Value::string(name.to_string(), Span::unknown()))
-                            .unwrap_or(Value::nothing(Span::unknown()));
+                let value = if caa.tag().as_str() == "issue" || caa.tag().as_str() == "issuewild" {
+                    match caa.value_as_issue() {
+                        Ok((issuer_name, key_values)) => {
+                            let issuer_name = issuer_name
+                                .as_ref()
+                                .map(|name| Value::string(name.to_string(), Span::unknown()))
+                                .unwrap_or(Value::nothing(Span::unknown()));
 
-                        let parameters: HashMap<String, Value> = key_values
-                            .iter()
-                            .map(|key_val| {
-                                (
-                                    key_val.key().into(),
-                                    Value::string(key_val.value(), Span::unknown()),
-                                )
-                            })
-                            .collect();
+                            let parameters: HashMap<String, Value> = key_values
+                                .iter()
+                                .map(|key_val| {
+                                    (
+                                        key_val.key().into(),
+                                        Value::string(key_val.value(), Span::unknown()),
+                                    )
+                                })
+                                .collect();
 
-                        Value::record(
-                            nu_protocol::Record::from_iter(std::iter::zip(
-                                vec!["issuer_name".into(), "parameters".into()],
-                                vec![
-                                    issuer_name,
-                                    Value::record(
-                                        nu_protocol::Record::from_iter(parameters),
-                                        Span::unknown(),
-                                    ),
-                                ],
-                            )),
-                            Span::unknown(),
-                        )
+                            Value::record(
+                                nu_protocol::Record::from_iter(std::iter::zip(
+                                    vec!["issuer_name".into(), "parameters".into()],
+                                    vec![
+                                        issuer_name,
+                                        Value::record(
+                                            nu_protocol::Record::from_iter(parameters),
+                                            Span::unknown(),
+                                        ),
+                                    ],
+                                )),
+                                Span::unknown(),
+                            )
+                        }
+                        Err(_) => Value::binary(caa.raw_value().to_vec(), Span::unknown()),
                     }
-                    hickory_proto::rr::rdata::caa::Value::Url(url) => {
-                        Value::string(url.to_string(), Span::unknown())
-                    }
-                    hickory_proto::rr::rdata::caa::Value::Unknown(data) => {
-                        Value::binary(data.clone(), Span::unknown())
+                } else {
+                    match caa.value_as_iodef() {
+                        Ok(url) => Value::string(url.to_string(), Span::unknown()),
+                        Err(_) => Value::binary(caa.raw_value().to_vec(), Span::unknown()),
                     }
                 };
 
