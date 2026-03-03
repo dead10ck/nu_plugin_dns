@@ -67,7 +67,11 @@ jobs:
         if: ${{ inputs.release_level != 'none' }}
         run: |
           cargo release version --no-confirm ${{ inputs.release_level }} ${{ env.EXECUTE }}
-          cargo release hook ${{ env.EXECUTE }}
+
+      - name: release hook validation
+        if: ${{ inputs.release_level != 'none' }}
+        run: |
+          cargo release hook --no-confirm --unpublished ${{ env.EXECUTE }}
 
       - name: release version tag and push
         if: ${{ inputs.release_level != 'none' && inputs.execute }}
