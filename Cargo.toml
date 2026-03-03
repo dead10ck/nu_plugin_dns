@@ -30,8 +30,8 @@ lto = "thin"
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.31"
-nu-plugin = "0.110.0"
-nu-protocol = "0.110.0"
+nu-plugin = "0.111.0"
+nu-protocol = "0.111.0"
 
 tokio = "1.49.0"
 tracing = "0.1"
@@ -74,8 +74,8 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.110.0"
-nu-command = "0.110.0"
+nu-plugin-test-support = "0.111.0"
+nu-command = "0.111.0"
 tokio = { version = "1.49.0", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
