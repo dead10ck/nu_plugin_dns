@@ -9,7 +9,7 @@ if $env.NEW_VERSION =~ '-' {
   exit 0
 }
 
-let found = open CHANGELOG.md | find $"# [($env.NEW_VERSION)]" | length
+let found = open --raw CHANGELOG.md | find $"# [($env.NEW_VERSION)]" | length
 
 if $found == 0 {
   log info $"pre-release: missing change log entry for version ($env.NEW_VERSION)"
