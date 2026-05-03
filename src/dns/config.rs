@@ -4,13 +4,10 @@ use std::{
     time::Duration,
 };
 
-use hickory_proto::{
-    rr::{DNSClass, RecordType},
-    xfer::Protocol,
-};
+use hickory_proto::rr::{DNSClass, RecordType};
 use hickory_resolver::config::ResolverConfig;
 use nu_plugin::EvaluatedCall;
-use nu_protocol::{record, LabeledError, Span, Spanned, Value};
+use nu_protocol::{record, FromValue, LabeledError, Span, Spanned, Value};
 
 use crate::spanned;
 
@@ -19,17 +16,19 @@ use super::{
     serde::{self, DnssecMode, RType},
 };
 
-#[derive(Debug)]
+pub use resolver::{Protocol, ProtocolConfig};
+
+mod resolver;
+
+#[derive(Debug, FromValue)]
 pub struct Config {
-    pub protocol: Spanned<Protocol>,
-    pub server: Spanned<SocketAddr>,
+    pub resolver_config: Spanned<ResolverConfig>,
 
     pub qtypes: Spanned<Vec<Spanned<RecordType>>>,
     pub class: Spanned<DNSClass>,
 
     pub code: Spanned<bool>,
     pub dnssec_mode: Spanned<DnssecMode>,
-    pub dns_name: Option<Spanned<String>>,
 
     pub tasks: Spanned<usize>,
     pub timeout: Spanned<Duration>,
@@ -91,7 +90,7 @@ impl Config {
             Some(val) => {
                 let span = val.span();
                 Some(
-                    serde::Protocol::try_from(val)
+                    serde::Protocol::from_value(val)
                         .map(|serde::Protocol(proto)| spanned!(proto, span))?,
                 )
             }
