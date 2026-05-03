@@ -37,18 +37,14 @@ rustls = "0.23.43"
 webpki-roots = "1.0.9"
 tokio-util = { version = "0.7.19", features = ["rt"] }
 
-[dependencies.hickory-resolver]
-version = "0.25.2"
-features = [
-  "dnssec-ring",
-  "tls-ring",
-  "https-ring",
-  "quic-ring",
-  "h3-ring",
-]
-
 [dependencies.hickory-proto]
-version = "0.25.2"
+version = "0.26.1"
+features = [
+  "dnssec-ring",
+]
+
+[dependencies.hickory-resolver]
+version = "0.26.1"
 features = [
   "dnssec-ring",
   "tls-ring",
@@ -57,8 +53,8 @@ features = [
   "h3-ring",
 ]
 
-[dependencies.hickory-client]
-version = "0.25.2"
+[dependencies.hickory-net]
+version = "0.26.1"
 features = [
   "dnssec-ring",
   "tls-ring",
@@ -91,7 +87,7 @@ nu-plugin-engine = { version = "0.115.1", features = ["local-socket"] }
 tokio = { version = "1.53.1", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
-version = "0.25.2"
+version = "0.26.1"
 features = [
   "dnssec-ring",
   "tls-ring",

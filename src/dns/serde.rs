@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::str::FromStr;
+use std::{borrow::Cow, collections::HashMap};
 
 use hickory_proto::{
-    ProtoError,
     dnssec::{
         self, PublicKey,
         rdata::{
@@ -21,7 +20,8 @@ use hickory_proto::{
         },
     },
 };
-use nu_protocol::{FromValue, LabeledError, Span, Value, record};
+
+use nu_protocol::{FromValue, LabeledError, ShellError, Span, Value, record};
 
 use super::config::Config;
 use super::constants;
@@ -79,34 +79,19 @@ where
 }
 
 #[derive(Debug)]
-pub struct Response(hickory_proto::xfer::DnsResponse);
+pub struct Response<'m>(pub &'m hickory_proto::op::Message);
 
-impl Response {
-    pub fn new(msg: hickory_proto::xfer::DnsResponse) -> Self {
-        Self(msg)
-    }
-
-    pub fn into_inner(self) -> hickory_proto::xfer::DnsResponse {
-        self.0
-    }
-
-    pub fn size(&self) -> usize {
-        self.0.as_buffer().len()
-    }
-
+impl Response<'_> {
     pub fn into_value(self, code: bool) -> Result<Value, LabeledError> {
-        let size = Value::filesize(self.size() as i64, Span::unknown());
-        let message = self.into_inner().into_message();
-        let header = Header(message.header()).into_value(code);
-        let mut parts = message.into_parts();
+        let header = Header(&self.0.metadata).into_value(code);
 
-        let question = parts.queries.pop().map_or_else(
+        let question = self.0.queries.first().map_or_else(
             || Value::record(record!(), Span::unknown()),
-            |q| Query(q).into_value(code),
+            |q| Query(Cow::Borrowed(q)).into_value(code),
         );
 
         let parse_records =
-            |records: Vec<hickory_proto::rr::Record>| -> Result<Value, LabeledError> {
+            |records: &Vec<hickory_proto::rr::Record>| -> Result<Value, LabeledError> {
                 Ok(Value::list(
                     records
                         .into_iter()
@@ -116,11 +101,13 @@ impl Response {
                 ))
             };
 
-        let answer = parse_records(parts.answers)?;
-        let authority = parse_records(parts.name_servers)?;
-        let additional = parse_records(parts.additionals)?;
-        let edns = parts
+        let answer = parse_records(&self.0.answers)?;
+        let authority = parse_records(&self.0.authorities)?;
+        let additional = parse_records(&self.0.additionals)?;
+        let edns = self
+            .0
             .edns
+            .as_ref()
             .map(|edns| Edns(edns).into_value())
             .unwrap_or(Value::nothing(Span::unknown()));
 
@@ -131,22 +118,22 @@ impl Response {
                         .iter()
                         .map(|s| (*s).into()),
                 ),
-                vec![header, question, answer, authority, additional, edns, size],
+                vec![header, question, answer, authority, additional, edns],
             )),
             Span::unknown(),
         ))
     }
 }
 
-pub struct Header<'r>(pub &'r hickory_proto::op::Header);
+pub struct Header<'r>(pub &'r hickory_proto::op::Metadata);
 
 impl Header<'_> {
     pub fn into_value(self, code: bool) -> Value {
         let Header(header) = self;
 
-        let id = Value::int(header.id().into(), Span::unknown());
+        let id = Value::int(header.id.into(), Span::unknown());
 
-        let message_type_string = Value::string(header.message_type().to_string(), Span::unknown());
+        let message_type_string = Value::string(header.message_type.to_string(), Span::unknown());
         let message_type = if code {
             Value::record(
                 nu_protocol::Record::from_iter(std::iter::zip(
@@ -157,7 +144,7 @@ impl Header<'_> {
                     ),
                     vec![
                         message_type_string,
-                        Value::int(header.message_type() as i64, Span::unknown()),
+                        Value::int(header.message_type as i64, Span::unknown()),
                     ],
                 )),
                 Span::unknown(),
@@ -166,17 +153,13 @@ impl Header<'_> {
             message_type_string
         };
 
-        let op_code = code_to_record_u8(header.op_code(), code);
-        let authoritative = Value::bool(header.authoritative(), Span::unknown());
-        let truncated = Value::bool(header.truncated(), Span::unknown());
-        let recursion_desired = Value::bool(header.recursion_desired(), Span::unknown());
-        let recursion_available = Value::bool(header.recursion_available(), Span::unknown());
-        let authentic_data = Value::bool(header.authentic_data(), Span::unknown());
-        let response_code = code_to_record_u16(header.response_code(), code);
-        let query_count = Value::int(header.query_count().into(), Span::unknown());
-        let answer_count = Value::int(header.answer_count().into(), Span::unknown());
-        let name_server_count = Value::int(header.name_server_count().into(), Span::unknown());
-        let additional_count = Value::int(header.additional_count().into(), Span::unknown());
+        let op_code = code_to_record_u8(header.op_code, code);
+        let authoritative = Value::bool(header.authoritative, Span::unknown());
+        let truncated = Value::bool(header.truncation, Span::unknown());
+        let recursion_desired = Value::bool(header.recursion_desired, Span::unknown());
+        let recursion_available = Value::bool(header.recursion_available, Span::unknown());
+        let authentic_data = Value::bool(header.authentic_data, Span::unknown());
+        let response_code = code_to_record_u16(header.response_code, code);
 
         Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
@@ -195,10 +178,6 @@ impl Header<'_> {
                     recursion_available,
                     authentic_data,
                     response_code,
-                    query_count,
-                    answer_count,
-                    name_server_count,
-                    additional_count,
                 ],
             )),
             Span::unknown(),
@@ -207,9 +186,9 @@ impl Header<'_> {
 }
 
 #[derive(Debug)]
-pub struct Query(pub hickory_proto::op::query::Query);
+pub struct Query<'q>(pub Cow<'q, hickory_proto::op::Query>);
 
-impl Query {
+impl<'q> Query<'q> {
     pub fn into_value(self, code: bool) -> Value {
         let Query(query) = self;
 
@@ -229,9 +208,7 @@ impl Query {
             Span::unknown(),
         )
     }
-}
 
-impl Query {
     pub fn try_from_value(value: &Value, config: &Config) -> Result<Vec<Self>, LabeledError> {
         tracing::debug!(?value);
 
@@ -275,7 +252,7 @@ impl Query {
                 let mut query = hickory_proto::op::Query::query(name, qtype.0);
                 query.set_query_class(class);
 
-                Ok(vec![Query(query)])
+                Ok(vec![Self(Cow::Owned(query))])
             }
 
             // If any other input type is given, the CLI flags fill in the type
@@ -297,7 +274,7 @@ impl Query {
                     .map(|qtype| {
                         let mut query = hickory_proto::op::Query::query(name.clone(), qtype.item);
                         query.set_query_class(config.class.item);
-                        Query(query)
+                        Self(Cow::Owned(query))
                     })
                     .collect();
 
@@ -315,7 +292,7 @@ impl Query {
                 }) {
                     return Ok(vals
                         .iter()
-                        .map(|val| Query::try_from_value(val, config))
+                        .map(|val| Self::try_from_value(val, config))
                         .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .flatten()
@@ -357,7 +334,7 @@ impl Query {
                     .map(|qtype| {
                         let mut query = hickory_proto::op::Query::query(name.clone(), qtype.item);
                         query.set_query_class(config.class.item);
-                        Query(query)
+                        Self(Cow::Owned(query))
                     })
                     .collect();
 
@@ -371,19 +348,17 @@ impl Query {
     }
 }
 
-pub struct Record(pub hickory_proto::rr::resource::Record);
+pub struct Record<'r>(pub &'r hickory_proto::rr::Record);
 
-impl Record {
+impl<'r> Record<'r> {
     pub fn into_value(self, code: bool) -> Result<Value, LabeledError> {
-        let Record(record) = self;
-        let parts = record.into_parts();
+        let name = Value::string(self.0.name.to_utf8(), Span::unknown());
+        let rtype = code_to_record_u16(self.0.data.record_type(), code);
+        let class = code_to_record_u16(self.0.dns_class, code);
+        let ttl = util::sec_to_duration(self.0.ttl);
 
-        let name = Value::string(parts.name_labels.to_utf8(), Span::unknown());
-        let rtype = code_to_record_u16(parts.rdata.record_type(), code);
-        let class = code_to_record_u16(parts.dns_class, code);
-        let ttl = util::sec_to_duration(parts.ttl);
-        let rdata = RData(parts.rdata).into_value()?;
-        let proof = Value::string(parts.proof.to_string().to_lowercase(), Span::unknown());
+        let rdata = RData(&self.0.data).into_value()?;
+        let proof = Value::string(self.0.proof.to_string().to_lowercase(), Span::unknown());
 
         Ok(Value::record(
             nu_protocol::Record::from_iter(std::iter::zip(
@@ -395,15 +370,16 @@ impl Record {
     }
 }
 
-pub struct RData(pub hickory_proto::rr::RData);
+pub struct RData<'r>(pub &'r hickory_proto::rr::RData);
 
-impl RData {
+impl<'r> RData<'r> {
     pub fn into_value(self) -> Result<Value, LabeledError> {
         let val = match self.0 {
             hickory_proto::rr::RData::CAA(caa) => {
-                let issuer_ctitical = Value::bool(caa.issuer_critical(), Span::unknown());
-                let tag = Value::string(caa.tag().as_str(), Span::unknown());
-                let value = if caa.tag().as_str() == "issue" || caa.tag().as_str() == "issuewild" {
+                let issuer_ctitical = Value::bool(caa.issuer_critical, Span::unknown());
+                let tag = Value::string(caa.tag.as_str(), Span::unknown());
+
+                let value = if caa.tag.as_str() == "issue" || caa.tag.as_str() == "issuewild" {
                     match caa.value_as_issue() {
                         Ok((issuer_name, key_values)) => {
                             let issuer_name = issuer_name
@@ -435,12 +411,12 @@ impl RData {
                                 Span::unknown(),
                             )
                         }
-                        Err(_) => Value::binary(caa.raw_value().to_vec(), Span::unknown()),
+                        Err(_) => Value::binary(&*caa.value, Span::unknown()),
                     }
                 } else {
                     match caa.value_as_iodef() {
                         Ok(url) => Value::string(url.to_string(), Span::unknown()),
-                        Err(_) => Value::binary(caa.raw_value().to_vec(), Span::unknown()),
+                        Err(_) => Value::binary(&*caa.value, Span::unknown()),
                     }
                 };
 
@@ -458,8 +434,8 @@ impl RData {
             // so just use that
             // hickory_proto::rr::RData::CSYNC(_) => todo!(),
             hickory_proto::rr::RData::HINFO(hinfo) => {
-                let cpu = util::string_or_binary(hinfo.cpu());
-                let os = util::string_or_binary(hinfo.os());
+                let cpu = util::string_or_binary(&*hinfo.cpu);
+                let os = util::string_or_binary(&*hinfo.os);
 
                 Value::record(
                     record!(
@@ -472,9 +448,9 @@ impl RData {
 
             hickory_proto::rr::RData::HTTPS(hickory_proto::rr::rdata::HTTPS(svcb))
             | hickory_proto::rr::RData::SVCB(svcb) => {
-                let svc_priority = Value::int(svcb.svc_priority() as i64, Span::unknown());
-                let target_name = Value::string(svcb.target_name().to_string(), Span::unknown());
-                let svc_params = svcb.svc_params().iter().map(|(key, value)| {
+                let svc_priority = Value::int(svcb.svc_priority as i64, Span::unknown());
+                let target_name = Value::string(svcb.target_name.to_string(), Span::unknown());
+                let svc_params = svcb.svc_params.iter().map(|(key, value)| {
                     let value = match value {
                         SvcParamValue::Mandatory(param_keys) => Value::list(
                             param_keys
@@ -534,8 +510,8 @@ impl RData {
             }
 
             hickory_proto::rr::RData::MX(mx) => {
-                let preference = Value::int(mx.preference() as i64, Span::unknown());
-                let exchange = Value::string(mx.exchange().to_string(), Span::unknown());
+                let preference = Value::int(mx.preference as i64, Span::unknown());
+                let exchange = Value::string(mx.exchange.to_string(), Span::unknown());
 
                 Value::record(
                     record![
@@ -547,12 +523,12 @@ impl RData {
             }
 
             hickory_proto::rr::RData::NAPTR(naptr) => {
-                let order = Value::int(naptr.order() as i64, Span::unknown());
-                let preference = Value::int(naptr.preference() as i64, Span::unknown());
-                let flags = util::string_or_binary(naptr.flags());
-                let services = util::string_or_binary(naptr.services());
-                let regexp = util::string_or_binary(naptr.regexp());
-                let replacement = Value::string(naptr.replacement().to_string(), Span::unknown());
+                let order = Value::int(naptr.order as i64, Span::unknown());
+                let preference = Value::int(naptr.preference as i64, Span::unknown());
+                let flags = util::string_or_binary(&*naptr.flags);
+                let services = util::string_or_binary(&*naptr.services);
+                let regexp = util::string_or_binary(&*naptr.regexp);
+                let replacement = Value::string(&*naptr.replacement.to_string(), Span::unknown());
 
                 Value::record(
                     record![
@@ -567,22 +543,22 @@ impl RData {
                 )
             }
 
-            hickory_proto::rr::RData::NULL(null) => util::string_or_binary(null.anything()),
+            hickory_proto::rr::RData::NULL(null) => util::string_or_binary(&*null.anything),
             hickory_proto::rr::RData::NS(ns) => Value::string(ns.to_string(), Span::unknown()),
             hickory_proto::rr::RData::OPENPGPKEY(key) => {
-                Value::binary(key.public_key(), Span::unknown())
+                Value::binary(&*key.public_key, Span::unknown())
             }
             hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(),
             hickory_proto::rr::RData::PTR(name) => Value::string(name.to_string(), Span::unknown()),
 
             hickory_proto::rr::RData::SOA(soa) => {
-                let mname = Value::string(soa.mname().to_string(), Span::unknown());
-                let rname = Value::string(soa.rname().to_string(), Span::unknown());
-                let serial = Value::int(soa.serial() as i64, Span::unknown());
-                let refresh = util::sec_to_duration(soa.refresh() as u64);
-                let retry = util::sec_to_duration(soa.retry() as u64);
-                let expire = util::sec_to_duration(soa.expire() as u64);
-                let minimum = util::sec_to_duration(soa.minimum() as u64);
+                let mname = Value::string(soa.mname.to_string(), Span::unknown());
+                let rname = Value::string(soa.rname.to_string(), Span::unknown());
+                let serial = Value::int(soa.serial as i64, Span::unknown());
+                let refresh = util::sec_to_duration(soa.refresh as u64);
+                let retry = util::sec_to_duration(soa.retry as u64);
+                let expire = util::sec_to_duration(soa.expire as u64);
+                let minimum = util::sec_to_duration(soa.minimum as u64);
 
                 Value::record(
                     record![
@@ -599,10 +575,10 @@ impl RData {
             }
 
             hickory_proto::rr::RData::SRV(srv) => {
-                let priority = Value::int(srv.priority() as i64, Span::unknown());
-                let weight = Value::int(srv.weight() as i64, Span::unknown());
-                let port = Value::int(srv.port() as i64, Span::unknown());
-                let target = Value::string(srv.target().to_string(), Span::unknown());
+                let priority = Value::int(srv.priority as i64, Span::unknown());
+                let weight = Value::int(srv.weight as i64, Span::unknown());
+                let port = Value::int(srv.port as i64, Span::unknown());
+                let target = Value::string(srv.target.to_string(), Span::unknown());
 
                 Value::record(
                     record![
@@ -616,7 +592,7 @@ impl RData {
             }
 
             hickory_proto::rr::RData::SSHFP(sshfp) => {
-                let algorithm = match sshfp.algorithm() {
+                let algorithm = match sshfp.algorithm {
                     sshfp::Algorithm::Reserved => Value::string("reserved", Span::unknown()),
                     sshfp::Algorithm::RSA => Value::string("RSA", Span::unknown()),
                     sshfp::Algorithm::DSA => Value::string("DSA", Span::unknown()),
@@ -626,7 +602,7 @@ impl RData {
                     sshfp::Algorithm::Unassigned(code) => Value::int(code as i64, Span::unknown()),
                 };
 
-                let fingerprint_type = match sshfp.fingerprint_type() {
+                let fingerprint_type = match sshfp.fingerprint_type {
                     sshfp::FingerprintType::Reserved => Value::string("reserved", Span::unknown()),
                     sshfp::FingerprintType::SHA1 => Value::string("SHA-1", Span::unknown()),
                     sshfp::FingerprintType::SHA256 => Value::string("SHA-256", Span::unknown()),
@@ -635,7 +611,7 @@ impl RData {
                     }
                 };
 
-                let fingerprint = Value::binary(sshfp.fingerprint(), Span::unknown());
+                let fingerprint = Value::binary(&*sshfp.fingerprint, Span::unknown());
 
                 Value::record(
                     record![
@@ -647,7 +623,7 @@ impl RData {
                 )
             }
             hickory_proto::rr::RData::TLSA(tlsa) => {
-                let cert_usage = match tlsa.cert_usage() {
+                let cert_usage = match tlsa.cert_usage {
                     tlsa::CertUsage::PkixTa => Value::string("PKIX-TA", Span::unknown()),
                     tlsa::CertUsage::PkixEe => Value::string("PKIX-EE", Span::unknown()),
                     tlsa::CertUsage::DaneTa => Value::string("DANE-TA", Span::unknown()),
@@ -656,14 +632,14 @@ impl RData {
                     tlsa::CertUsage::Unassigned(code) => Value::int(code as i64, Span::unknown()),
                 };
 
-                let selector = match tlsa.selector() {
+                let selector = match tlsa.selector {
                     tlsa::Selector::Full => Value::string("full", Span::unknown()),
                     tlsa::Selector::Spki => Value::string("spki", Span::unknown()),
                     tlsa::Selector::Private => Value::string("private", Span::unknown()),
                     tlsa::Selector::Unassigned(code) => Value::int(code as i64, Span::unknown()),
                 };
 
-                let matching = match tlsa.matching() {
+                let matching = match tlsa.matching {
                     tlsa::Matching::Raw => Value::string("raw", Span::unknown()),
                     tlsa::Matching::Sha256 => Value::string("SHA-256", Span::unknown()),
                     tlsa::Matching::Sha512 => Value::string("SHA-512", Span::unknown()),
@@ -671,7 +647,7 @@ impl RData {
                     tlsa::Matching::Unassigned(code) => Value::int(code as i64, Span::unknown()),
                 };
 
-                let cert_data = Value::binary(tlsa.cert_data(), Span::unknown());
+                let cert_data = Value::binary(&*tlsa.cert_data, Span::unknown());
 
                 Value::record(
                     record![
@@ -684,7 +660,8 @@ impl RData {
                 )
             }
             hickory_proto::rr::RData::TXT(data) => Value::list(
-                data.iter()
+                data.txt_data
+                    .iter()
                     .map(|txt_data| util::string_or_binary(Vec::from(txt_data.clone())))
                     .collect(),
                 Span::unknown(),
@@ -962,62 +939,16 @@ impl RData {
                         Span::unknown(),
                     )
                 }
-                DNSSECRData::SIG(sig) => {
-                    let type_covered =
-                        Value::string(sig.type_covered().to_string(), Span::unknown());
-                    let algorithm = Value::string(sig.algorithm().to_string(), Span::unknown());
-                    let num_labels = Value::int(sig.num_labels() as i64, Span::unknown());
-                    let original_ttl = util::sec_to_duration(sig.original_ttl());
-                    let sig_expiration =
-                        util::sec_to_date(sig.sig_expiration().get(), Span::unknown())?;
-                    let sig_inception =
-                        util::sec_to_date(sig.sig_inception().get(), Span::unknown())?;
-                    let key_tag = Value::int(sig.key_tag() as i64, Span::unknown());
-                    let signer_name = Value::string(sig.signer_name().to_string(), Span::unknown());
-                    let sig = Value::binary(sig.sig(), Span::unknown());
+                DNSSECRData::SIG(sig) => sig_to_value(sig)?,
 
-                    Value::record(
-                        record![
-                            "type_covered"         => type_covered,
-                            "algorithm"            => algorithm,
-                            "num_labels"           => num_labels,
-                            "original_ttl"         => original_ttl,
-                            "signature_expiration" => sig_expiration,
-                            "signature_inception"  => sig_inception,
-                            "key_tag"              => key_tag,
-                            "signer_name"          => signer_name,
-                            "signature"            => sig,
-                        ],
-                        Span::unknown(),
-                    )
-                }
-                DNSSECRData::TSIG(tsig) => {
-                    // [NOTE] oid, error, and other do not have accessors
-                    let algorithm = Value::string(tsig.algorithm().to_string(), Span::unknown());
-                    let time = util::sec_to_date(tsig.time() as i64, Span::unknown())?;
-                    let fudge = Value::int(tsig.fudge() as i64, Span::unknown());
-                    let mac = Value::binary(tsig.mac(), Span::unknown());
-                    // let oid = Value::int(tsig.oid() as i64, Span::unknown());
-                    // let error = Value::int(tsig.error() as i64, Span::unknown());
-                    // let other = Value::binary(tsig.other(), Span::unknown());
+                // [NOTE] annoyingly, there does not seem to be a way to extract the SIG
+                // from the RRSIG without cloning
+                DNSSECRData::RRSIG(rrsig) => sig_to_value(rrsig)?,
 
-                    Value::record(
-                        record![
-                            "algorithm" => algorithm,
-                            "time"      => time,
-                            "fudge"     => fudge,
-                            "mac"       => mac,
-                            // "oid"      => oid,
-                            // "error"    => error,
-                            // "other"    => other,
-                        ],
-                        Span::unknown(),
-                    )
-                }
                 DNSSECRData::Unknown { code, rdata } => Value::record(
                     record![
-                        "code"  => Value::int(code as i64, Span::unknown()),
-                        "rdata" => Value::binary(rdata.anything(), Span::unknown()),
+                        "code"  => Value::int(*code as i64, Span::unknown()),
+                        "rdata" => Value::binary(&*rdata.anything, Span::unknown()),
                     ],
                     Span::unknown(),
                 ),
@@ -1025,8 +956,8 @@ impl RData {
             },
             hickory_proto::rr::RData::Unknown { code: rtype, rdata } => Value::record(
                 record![
-                    "code"  => Value::int(u16::from(rtype) as i64, Span::unknown()),
-                    "rdata" => Value::binary(rdata.anything(), Span::unknown()),
+                    "code"  => Value::int(u16::from(*rtype) as i64, Span::unknown()),
+                    "rdata" => Value::binary(&*rdata.anything, Span::unknown()),
                 ],
                 Span::unknown(),
             ),
@@ -1037,9 +968,37 @@ impl RData {
     }
 }
 
-pub struct Edns(pub hickory_proto::op::Edns);
+fn sig_to_value(sig: &dnssec::rdata::SIG) -> Result<Value, LabeledError> {
+    let type_covered = Value::string(sig.input().type_covered.to_string(), Span::unknown());
+    let algorithm = Value::string(sig.input().algorithm.to_string(), Span::unknown());
+    let num_labels = Value::int(sig.input().num_labels as i64, Span::unknown());
+    let original_ttl = util::sec_to_duration(sig.input().original_ttl);
+    let sig_expiration = util::sec_to_date(sig.input().sig_expiration.get(), Span::unknown())?;
+    let sig_inception = util::sec_to_date(sig.input().sig_inception.get(), Span::unknown())?;
+    let key_tag = Value::int(sig.input().key_tag as i64, Span::unknown());
+    let signer_name = Value::string(sig.input().signer_name.to_string(), Span::unknown());
 
-impl Edns {
+    let sig = Value::binary(sig.sig(), Span::unknown());
+
+    Ok(Value::record(
+        record![
+            "type_covered"         => type_covered,
+            "algorithm"            => algorithm,
+            "num_labels"           => num_labels,
+            "original_ttl"         => original_ttl,
+            "signature_expiration" => sig_expiration,
+            "signature_inception"  => sig_inception,
+            "key_tag"              => key_tag,
+            "signer_name"          => signer_name,
+            "signature"            => sig,
+        ],
+        Span::unknown(),
+    ))
+}
+
+pub struct Edns<'e>(pub &'e hickory_proto::op::Edns);
+
+impl<'e> Edns<'e> {
     pub fn into_value(self) -> Value {
         let edns = self.0;
         let rcode_high = Value::int(edns.rcode_high() as i64, Span::unknown());
@@ -1127,7 +1086,7 @@ impl TryFrom<&Value> for RType {
     type Error = LabeledError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        let qtype_err = |err: ProtoError, span: Span| {
+        let qtype_err = |err: hickory_proto::serialize::binary::DecodeError, span: Span| {
             LabeledError::new("invalid record type")
                 .with_label(format!("Error parsing record type: {}", err), span)
         };
@@ -1163,7 +1122,7 @@ impl TryFrom<Value> for DNSClass {
     type Error = LabeledError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        let class_err = |err: ProtoError, span: Span| {
+        let class_err = |err: hickory_proto::serialize::binary::DecodeError, span: Span| {
             LabeledError::new("invalid DNS class")
                 .with_label(format!("Error parsing DNS class: {}", err), span)
         };
@@ -1186,33 +1145,36 @@ impl TryFrom<Value> for DNSClass {
     }
 }
 
-pub struct Protocol(pub hickory_proto::xfer::Protocol);
+#[derive(Debug)]
+pub struct Protocol(pub hickory_net::xfer::Protocol);
 
-impl TryFrom<Value> for Protocol {
-    type Error = LabeledError;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
+impl FromValue for Protocol {
+    fn from_value(value: Value) -> Result<Self, ShellError> {
         let result = match value {
             Value::String { .. } => match value.as_str().unwrap().to_uppercase().as_str() {
-                "UDP" => Protocol(hickory_proto::xfer::Protocol::Udp),
-                "TCP" => Protocol(hickory_proto::xfer::Protocol::Tcp),
-                "TLS" => Protocol(hickory_proto::xfer::Protocol::Tls),
-                "HTTPS" => Protocol(hickory_proto::xfer::Protocol::Https),
-                "QUIC" => Protocol(hickory_proto::xfer::Protocol::Quic),
+                "UDP" => hickory_net::xfer::Protocol::Udp,
+                "TCP" => hickory_net::xfer::Protocol::Tcp,
+                "TLS" => hickory_net::xfer::Protocol::Tls,
+                "HTTPS" => hickory_net::xfer::Protocol::Https,
+                "QUIC" => hickory_net::xfer::Protocol::Quic,
                 proto => {
-                    return Err(LabeledError::new("invalid protocol").with_label(
-                        format!("Invalid or unsupported protocol: {proto}"),
-                        value.span(),
-                    ));
+                    return Err(ShellError::LabeledError(Box::new(
+                        LabeledError::new("invalid protocol").with_label(
+                            format!("Invalid or unsupported protocol: {proto}"),
+                            value.span(),
+                        ),
+                    )));
                 }
             },
             _ => {
-                return Err(LabeledError::new("invalid input")
-                    .with_label("Input must be a string", value.span()));
+                return Err(ShellError::LabeledError(Box::new(
+                    LabeledError::new("invalid input")
+                        .with_label("Input must be a string", value.span()),
+                )));
             }
         };
 
-        Ok(result)
+        Ok(Protocol(result))
     }
 }
 

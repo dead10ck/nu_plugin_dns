@@ -16,7 +16,7 @@ pub mod flags {
 }
 
 pub mod config {
-    use hickory_proto::xfer::Protocol;
+    use hickory_net::xfer::Protocol;
 
     pub mod default {
         use std::time::Duration;
@@ -43,9 +43,8 @@ pub mod columns {
         pub const AUTHORITY: &str = "authority";
         pub const ADDITIONAL: &str = "additional";
         pub const EDNS: &str = "edns";
-        pub const SIZE: &str = "size";
 
-        pub const COLS: &[&str] = &[HEADER, QUESTION, ANSWER, AUTHORITY, ADDITIONAL, EDNS, SIZE];
+        pub const COLS: &[&str] = &[HEADER, QUESTION, ANSWER, AUTHORITY, ADDITIONAL, EDNS];
 
         pub mod header {
             pub const ID: &str = "id";
@@ -57,10 +56,6 @@ pub mod columns {
             pub const RECURSION_AVAILABLE: &str = "recursion_available";
             pub const AUTHENTIC_DATA: &str = "authentic_data";
             pub const RESPONSE_CODE: &str = "response_code";
-            pub const QUERY_COUNT: &str = "query_count";
-            pub const ANSWER_COUNT: &str = "answer_count";
-            pub const NAME_SERVER_COUNT: &str = "name_server_count";
-            pub const ADDITIONAL_COUNT: &str = "additional_count";
 
             pub const COLS: &[&str] = &[
                 ID,
@@ -72,10 +67,6 @@ pub mod columns {
                 RECURSION_AVAILABLE,
                 AUTHENTIC_DATA,
                 RESPONSE_CODE,
-                QUERY_COUNT,
-                ANSWER_COUNT,
-                NAME_SERVER_COUNT,
-                ADDITIONAL_COUNT,
             ];
         }
 

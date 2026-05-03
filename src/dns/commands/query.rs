@@ -5,7 +5,8 @@ use std::{
 };
 
 use futures_util::{stream::FuturesOrdered, Future, FutureExt, StreamExt, TryStreamExt};
-use hickory_client::client::ClientHandle;
+use hickory_net::{client::ClientHandle, runtime::TokioRuntimeProvider};
+use hickory_resolver::Resolver;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
     Example, IntoValue, LabeledError, ListStream, PipelineData, Signals, Signature, Span,
@@ -17,17 +18,17 @@ use tracing_subscriber::prelude::*;
 
 use crate::{
     dns::{
-        client::{BgHandle, DnsClient},
         config::Config,
         constants,
         serde::{self, Query},
+        DnsResolver,
     },
     Dns,
 };
 
 pub type DnsQueryResult =
     FuturesOrdered<Pin<Box<dyn Future<Output = Result<Value, LabeledError>> + Send>>>;
-pub type DnsQueryPluginClient = Arc<tokio::sync::RwLock<Option<(DnsClient, BgHandle)>>>;
+pub type DnsQueryPluginResolver = Arc<tokio::sync::RwLock<Option<Resolver<TokioRuntimeProvider>>>>;
 
 #[derive(Debug)]
 pub struct DnsQuery;
@@ -105,7 +106,7 @@ impl DnsQuery {
                 plugin.spawn(watch_sigterm(
                     ctrlc.clone(),
                     plugin.cancel.clone(),
-                    plugin.client.clone(),
+                    plugin.resolver.clone(),
                 ));
 
                 plugin.spawn(coordinate_queries(
@@ -151,7 +152,8 @@ impl DnsQuery {
     pub(crate) async fn query(
         config: Arc<Config>,
         input: Value,
-        client: DnsClient,
+        // [TODO] change this to a Resolver
+        resolver: Arc<DnsResolver>,
     ) -> DnsQueryResult {
         let in_span = input.span();
         let queries = match Query::try_from_value(&input, &config) {
@@ -171,7 +173,7 @@ impl DnsQuery {
         let mut responses = FuturesOrdered::new();
 
         for query in queries {
-            let mut client = client.clone();
+            let mut client = resolver.clone();
             let config = config.clone();
 
             let resp = async move {
@@ -179,12 +181,12 @@ impl DnsQuery {
 
                 tracing::info!(query.phase = "start", query.parts = ?parts);
 
-                let request = tokio::time::timeout(
+                let response = tokio::time::timeout(
                     config.timeout.item,
-                    client.query(parts.name.clone(), parts.query_class, parts.query_type),
+                    client.lookup(parts.name.clone(), parts.query_type),
                 );
 
-                request
+                response
                     .await
                     .map_err(|_| {
                         LabeledError::new("timed out").with_label(
@@ -196,8 +198,8 @@ impl DnsQuery {
                         LabeledError::new("DNS error")
                             .with_label(format!("Error in DNS response: {:?}", err), in_span)
                     })
-                    .and_then(|resp: hickory_proto::xfer::DnsResponse| {
-                        let resp = serde::Response::new(resp);
+                    .and_then(|resp: hickory_resolver::lookup::Lookup| {
+                        let resp = serde::Response(resp.message());
 
                         if tracing::enabled!(tracing::Level::DEBUG) {
                             tracing::debug!(query.phase = "finish", query.parts = ?parts, query.resp = ?resp);
@@ -228,7 +230,7 @@ impl DnsQuery {
 async fn watch_sigterm(
     ctrlc: Signals,
     cancel: CancellationToken,
-    client: DnsQueryPluginClient,
+    client: DnsQueryPluginResolver,
 ) -> Result<(), LabeledError> {
     while !ctrlc.interrupted()
         && client
@@ -273,7 +275,7 @@ fn stream_requests(
 
 async fn coordinate_queries(
     config: Arc<Config>,
-    client: DnsClient,
+    client: DnsResolver,
     mut request_rx: mpsc::Receiver<Value>,
     resp_tx: mpsc::Sender<Result<Value, LabeledError>>,
     cancel: CancellationToken,
