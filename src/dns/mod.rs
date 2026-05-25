@@ -2,13 +2,10 @@ use std::sync::Arc;
 
 use futures_util::Future;
 use hickory_net::runtime::TokioRuntimeProvider;
-use hickory_resolver::{config::ResolverConfig, Resolver};
 use nu_plugin::{Plugin, PluginCommand};
-use nu_protocol::LabeledError;
-use tokio::task::JoinHandle;
+use nu_protocol::{LabeledError, Span};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-use self::commands::query::DnsQueryPluginResolver;
 pub use config::Config;
 
 pub mod client;
@@ -19,7 +16,8 @@ pub mod serde;
 #[macro_use]
 pub mod util;
 
-pub type DnsResolver = Resolver<TokioRuntimeProvider>;
+pub type HickoryResolver = hickory_resolver::Resolver<TokioRuntimeProvider>;
+pub type DnsQueryPluginResolver = Arc<tokio::sync::RwLock<Option<HickoryResolver>>>;
 
 pub struct Dns {
     main_runtime: tokio::runtime::Runtime,
@@ -52,7 +50,7 @@ impl Dns {
         }
     }
 
-    pub async fn dns_client(&self, config: &Config) -> Result<DnsResolver, LabeledError> {
+    pub async fn dns_resolver(&self, config: &Config) -> Result<HickoryResolver, LabeledError> {
         // Since the plug-in binary is left running in the background by the
         // nushell engine between invocations, we leave a handle to it attached
         // to the plug-in object instance so we can reuse it across invocations.
@@ -65,22 +63,33 @@ impl Dns {
 
         let mut resolver_guard = self.resolver.write().await;
 
-        // it is cheap to clone and hand back an owned client because underneath
-        // it is just a mpsc::Sender
         match &mut *resolver_guard {
+            // remote possibility that between the time this lock was read to
+            // be empty above and when we acquired this write lock, the resolver
+            // was set somewhere else
             Some(resolver) => Ok(resolver.clone()),
             None => {
-                let (client, client_bg) = self.make_dns_client(config).await?;
+                let client = self.make_dns_resolver(config)?;
                 *resolver_guard = Some(client.clone());
                 Ok(client)
             }
         }
     }
 
-    async fn make_dns_client(&self, config: &Config) -> Result<DnsResolver, LabeledError> {
-        // let resolver_config = ResolverConfig::tls()
-        let resolver = DnsResolver::new(config, self.runtime_provider.clone()).await?;
-        tracing::info!(client.addr = ?config.server, client.protocol = ?config.protocol);
+    fn make_dns_resolver(&self, config: &Config) -> Result<HickoryResolver, LabeledError> {
+        let resolver = HickoryResolver::builder_with_config(
+            config.resolver_config.item.clone(),
+            self.runtime_provider.clone(),
+        )
+        .with_options(config.resolver_opts.item.clone())
+        .build()
+        .map_err(|err| {
+            LabeledError::new("error constructing dns resolver")
+                .with_label(err.to_string(), Span::unknown())
+        })?;
+
+        tracing::info!(config = ?config);
+
         Ok(resolver)
     }
 

@@ -1,15 +1,15 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    str::FromStr,
-    time::Duration,
-};
+use std::{cell::OnceCell, time::Duration};
 
 use hickory_proto::rr::{DNSClass, RecordType};
-use hickory_resolver::config::ResolverConfig;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{record, FromValue, LabeledError, Span, Spanned, Value};
 
-use crate::spanned;
+use crate::{
+    dns::config::resolver::{
+        HickoryResolverConfig, HickoryResolverOpts, ResolverConfig, ResolverOpts,
+    },
+    spanned,
+};
 
 use super::{
     constants::{self, flags},
@@ -20,9 +20,10 @@ pub use resolver::{Protocol, ProtocolConfig};
 
 mod resolver;
 
-#[derive(Debug, FromValue)]
+#[derive(Debug)]
 pub struct Config {
-    pub resolver_config: Spanned<ResolverConfig>,
+    pub resolver_config: Spanned<HickoryResolverConfig>,
+    pub resolver_opts: Spanned<HickoryResolverOpts>,
 
     pub qtypes: Spanned<Vec<Spanned<RecordType>>>,
     pub class: Spanned<DNSClass>,
@@ -85,96 +86,40 @@ impl Config {
     where
         F: FnMut(&str) -> Option<Value>,
     {
-        let protocol = match get_value(flags::PROTOCOL) {
-            None => None,
-            Some(val) => {
-                let span = val.span();
-                Some(
-                    serde::Protocol::from_value(val)
-                        .map(|serde::Protocol(proto)| spanned!(proto, span))?,
-                )
-            }
-        };
+        let system_opts = OnceCell::new();
 
-        let needs_dns_name = matches!(
-            protocol,
-            Some(Spanned {
-                item: Protocol::Tls | Protocol::Https | Protocol::Quic,
-                ..
-            })
-        );
-
-        let dns_name = match get_value(constants::flags::DNS_NAME) {
-            None => None,
-            Some(val) => {
-                let span = val.span();
-
-                if !needs_dns_name {
-                    return Err(LabeledError::new("invalid config combination").with_label(
-                        "DNS name only makes sense for TLS, HTTPS, or QUIC",
-                        val.span(),
-                    ));
-                }
-
-                Some(spanned!(val.into_string()?, span))
-            }
-        };
-
-        let (addr, protocol) = match get_value(flags::SERVER) {
-            Some(ref value @ Value::String { .. }) => {
-                let protocol = protocol.unwrap_or(spanned!(Protocol::Udp, Span::unknown()));
-
-                let addr = SocketAddr::from_str(value.as_str().unwrap())
-                    .or_else(|_| {
-                        IpAddr::from_str(value.as_str().unwrap()).map(|ip| {
-                            SocketAddr::new(ip, constants::config::default_port(protocol.item))
-                        })
-                    })
-                    .map_err(|err| {
-                        LabeledError::new("invalid server")
-                            .with_label(err.to_string(), value.clone().span())
-                    })?;
-
-                let addr = spanned!(addr, value.span());
-
-                (addr, protocol)
-            }
+        let resolver_config = match get_value(flags::RESOLVER_CONFIG) {
             None => {
-                let (config, _) =
+                let (conf, opts) =
                     hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
-                tracing::debug!(?config);
-                match config.name_servers() {
-                    [ns, ..] => (
-                        spanned!(ns.socket_addr, Span::unknown()),
-                        spanned!(ns.protocol, Span::unknown()),
-                    ),
-                    [] => {
-                        let config = ResolverConfig::default();
-                        let ns = config.name_servers().first().unwrap();
 
-                        // if protocol is explicitly configured, it should take
-                        // precedence over the system config
-                        (
-                            spanned!(ns.socket_addr, Span::unknown()),
-                            protocol.unwrap_or(spanned!(ns.protocol, Span::unknown())),
-                        )
-                    }
-                }
+                system_opts.set(spanned!(opts, Span::unknown()));
+                spanned!(conf, Span::unknown())
             }
             Some(val) => {
-                return Err(LabeledError::new("invalid server address")
-                    .with_label("server address should be a string", val.span()));
+                let span = val.span();
+                let conf = ResolverConfig::from_value(val)?;
+
+                spanned!(conf.0, span)
             }
         };
 
-        if needs_dns_name && dns_name.is_none() {
-            return Err(LabeledError::new("need DNS name").with_label(
-                "protocol needs to be accompanied by --dns-name",
-                protocol.span,
-            ));
-        }
+        let resolver_opts = match get_value(flags::RESOLVER_OPTS) {
+            None => system_opts.into_inner().unwrap_or_else(|| {
+                let (_, opts) =
+                    hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
-        let qtypes: Spanned<Vec<Spanned<RecordType>>> = match get_value(constants::flags::TYPE) {
+                spanned!(opts, Span::unknown())
+            }),
+            Some(val) => {
+                let span = val.span();
+                let opts = ResolverOpts::from_value(val)?;
+
+                spanned!(opts.0, span)
+            }
+        };
+
+        let qtypes: Spanned<Vec<Spanned<RecordType>>> = match get_value(flags::TYPE) {
             Some(list @ Value::List { .. }) => {
                 let span = list.span();
                 let vals = list.as_list()?;
@@ -204,7 +149,7 @@ impl Config {
             ),
         };
 
-        let class = match get_value(constants::flags::CLASS) {
+        let class = match get_value(flags::CLASS) {
             Some(val) => {
                 let span = val.span();
                 spanned!(crate::dns::serde::DNSClass::try_from(val)?.0, span)
@@ -212,14 +157,14 @@ impl Config {
             None => spanned!(hickory_proto::rr::DNSClass::IN, Span::unknown()),
         };
 
-        let code = match get_value(constants::flags::CODE) {
+        let code = match get_value(flags::CODE) {
             Some(val @ Value::Bool { .. }) => {
                 spanned!(val.as_bool().unwrap(), val.span())
             }
             _ => spanned!(false, Span::unknown()),
         };
 
-        let dnssec_mode = match get_value(constants::flags::DNSSEC) {
+        let dnssec_mode = match get_value(flags::DNSSEC) {
             Some(val) => {
                 let span = val.span();
                 spanned!(serde::DnssecMode::try_from(val)?, span)
@@ -227,7 +172,7 @@ impl Config {
             None => spanned!(serde::DnssecMode::Opportunistic, Span::unknown()),
         };
 
-        let tasks = match get_value(constants::flags::TASKS) {
+        let tasks = match get_value(flags::TASKS) {
             Some(val @ Value::Int { .. }) => {
                 let span = val.span();
                 spanned!(
@@ -246,7 +191,7 @@ impl Config {
             }
         };
 
-        let timeout = match get_value(constants::flags::TIMEOUT) {
+        let timeout = match get_value(flags::TIMEOUT) {
             Some(val @ Value::Duration { .. }) => {
                 let span = val.span();
                 spanned!(
@@ -266,13 +211,12 @@ impl Config {
         };
 
         Ok(Self {
-            protocol,
-            server: addr,
+            resolver_config,
+            resolver_opts,
             qtypes,
             code,
             class,
             dnssec_mode,
-            dns_name,
             tasks,
             timeout,
         })

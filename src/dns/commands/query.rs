@@ -1,12 +1,9 @@
 use std::{
     pin::Pin,
     sync::{atomic::AtomicBool, Arc},
-    time::Duration,
 };
 
-use futures_util::{stream::FuturesOrdered, Future, FutureExt, StreamExt, TryStreamExt};
-use hickory_net::{client::ClientHandle, runtime::TokioRuntimeProvider};
-use hickory_resolver::Resolver;
+use futures_util::{stream::FuturesOrdered, Future, StreamExt, TryStreamExt};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
     Example, IntoValue, LabeledError, ListStream, PipelineData, Signals, Signature, Span,
@@ -21,14 +18,13 @@ use crate::{
         config::Config,
         constants,
         serde::{self, Query},
-        DnsResolver,
+        HickoryResolver,
     },
     Dns,
 };
 
 pub type DnsQueryResult =
     FuturesOrdered<Pin<Box<dyn Future<Output = Result<Value, LabeledError>> + Send>>>;
-pub type DnsQueryPluginResolver = Arc<tokio::sync::RwLock<Option<Resolver<TokioRuntimeProvider>>>>;
 
 #[derive(Debug)]
 pub struct DnsQuery;
@@ -65,15 +61,7 @@ impl DnsQuery {
             }
         };
 
-        let client = tokio::time::timeout(config.timeout.item, plugin.dns_client(&config))
-            .await
-            .map_err(|_| {
-                LabeledError::new("timed out").with_label(
-                    format!("connecting to {} timed out", config.server.item),
-                    config.server.span,
-                )
-            })??;
-
+        let resolver = Arc::new(plugin.dns_resolver(&config).await?);
         let config = Arc::new(config);
 
         match input {
@@ -84,7 +72,7 @@ impl DnsQuery {
                     tracing::debug!(phase = "input", data.kind = "value");
                 }
 
-                let values = Self::query(config, val, client.clone())
+                let values = Self::query(config, val, resolver.clone())
                     .await
                     .try_collect::<Vec<_>>()
                     .await?;
@@ -103,15 +91,9 @@ impl DnsQuery {
                 let (request_tx, request_rx) = mpsc::channel(config.tasks.item);
                 let (resp_tx, mut resp_rx) = mpsc::channel(config.tasks.item);
 
-                plugin.spawn(watch_sigterm(
-                    ctrlc.clone(),
-                    plugin.cancel.clone(),
-                    plugin.resolver.clone(),
-                ));
-
                 plugin.spawn(coordinate_queries(
                     config,
-                    client,
+                    resolver,
                     request_rx,
                     resp_tx,
                     plugin.cancel.clone(),
@@ -153,7 +135,7 @@ impl DnsQuery {
         config: Arc<Config>,
         input: Value,
         // [TODO] change this to a Resolver
-        resolver: Arc<DnsResolver>,
+        resolver: Arc<HickoryResolver>,
     ) -> DnsQueryResult {
         let in_span = input.span();
         let queries = match Query::try_from_value(&input, &config) {
@@ -173,7 +155,7 @@ impl DnsQuery {
         let mut responses = FuturesOrdered::new();
 
         for query in queries {
-            let mut client = resolver.clone();
+            let client = resolver.clone();
             let config = config.clone();
 
             let resp = async move {
@@ -181,40 +163,38 @@ impl DnsQuery {
 
                 tracing::info!(query.phase = "start", query.parts = ?parts);
 
-                let response = tokio::time::timeout(
+                tokio::time::timeout(
                     config.timeout.item,
                     client.lookup(parts.name.clone(), parts.query_type),
-                );
-
-                response
-                    .await
-                    .map_err(|_| {
-                        LabeledError::new("timed out").with_label(
-                            format!("request to {} timed out", config.server.item),
-                            config.server.span,
-                        )
-                    })?
-                    .map_err(|err| {
-                        LabeledError::new("DNS error")
-                            .with_label(format!("Error in DNS response: {:?}", err), in_span)
-                    })
-                    .and_then(|resp: hickory_resolver::lookup::Lookup| {
-                        let resp = serde::Response(resp.message());
-
-                        if tracing::enabled!(tracing::Level::DEBUG) {
-                            tracing::debug!(query.phase = "finish", query.parts = ?parts, query.resp = ?resp);
-                        } else {
-                            tracing::info!(query.phase = "finish", query.parts = ?parts);
-                        }
-
-                        resp.into_value(config.code.item)
-                    })
-                    .inspect_err(
-                        |err| tracing::debug!(query.phase = "finish", query.error = ?err),
+                )
+                .await
+                .map_err(|_| {
+                    LabeledError::new("timed out").with_label(
+                        "request timed out",
+                        config.resolver_config.span,
                     )
-                    .inspect(|resp| {
-                        log_response_val(resp, "finish");
-                    })
+                })?
+                .map_err(|err| {
+                    LabeledError::new("DNS error")
+                        .with_label(format!("Error in DNS response: {:?}", err), in_span)
+                })
+                .and_then(|resp: hickory_resolver::lookup::Lookup| {
+                    let resp = serde::Response(resp.message());
+
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        tracing::debug!(query.phase = "finish", query.parts = ?parts, query.resp = ?resp);
+                    } else {
+                        tracing::info!(query.phase = "finish", query.parts = ?parts);
+                    }
+
+                    resp.into_value(config.code.item)
+                })
+                .inspect_err(
+                    |err| tracing::debug!(query.phase = "finish", query.error = ?err),
+                )
+                .inspect(|resp| {
+                    log_response_val(resp, "finish");
+                })
             };
 
             // apparently you cannot just collect this into a `FuturesOrdered`
@@ -225,25 +205,6 @@ impl DnsQuery {
 
         responses
     }
-}
-
-async fn watch_sigterm(
-    ctrlc: Signals,
-    cancel: CancellationToken,
-    client: DnsQueryPluginResolver,
-) -> Result<(), LabeledError> {
-    while !ctrlc.interrupted()
-        && client
-            .write()
-            .await
-            .as_mut()
-            .is_some_and(|bg| (&mut bg.1).now_or_never().is_none())
-    {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    cancel.cancel();
-    Ok(())
 }
 
 fn stream_requests(
@@ -275,7 +236,7 @@ fn stream_requests(
 
 async fn coordinate_queries(
     config: Arc<Config>,
-    client: DnsResolver,
+    client: Arc<HickoryResolver>,
     mut request_rx: mpsc::Receiver<Value>,
     resp_tx: mpsc::Sender<Result<Value, LabeledError>>,
     cancel: CancellationToken,
