@@ -3,10 +3,9 @@ pub mod commands {
 }
 
 pub mod flags {
-    pub const DNS_NAME: &str = "dns-name";
     pub const NAME: &str = "name";
-    pub const SERVER: &str = "server";
-    pub const PROTOCOL: &str = "protocol";
+    pub const RESOLVER_CONFIG: &str = "resolver-config";
+    pub const RESOLVER_OPTS: &str = "resolver-opts";
     pub const TYPE: &str = "type";
     pub const CLASS: &str = "class";
     pub const DNSSEC: &str = "dnssec";
