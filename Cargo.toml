@@ -30,14 +30,14 @@ lto = "thin"
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.32"
-nu-plugin = "0.112.2"
-nu-protocol = "0.112.2"
+nu-plugin = "0.113.0"
+nu-protocol = "0.113.0"
 
-tokio = "1.52.1"
+tokio = "1.52.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
-rustls = "0.23.38"
+rustls = "0.23.40"
 webpki-roots = "1.0.7"
 tokio-util = { version = "0.7.18", features = ["rt"] }
 
@@ -72,9 +72,9 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.112.2"
-nu-command = "0.112.2"
-tokio = { version = "1.52.1", features = ["fs"] }
+nu-plugin-test-support = "0.113.0"
+nu-command = "0.113.0"
+tokio = { version = "1.52.3", features = ["fs"] }
 
 [dev-dependencies.hickory-server]
 version = "0.25.2"
