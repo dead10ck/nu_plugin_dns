@@ -41,27 +41,11 @@ jobs:
       - name: checkout
         uses: actions/checkout@main
 
-      - name: setup-cargo-pre
-        uses: ./.github/actions/setup-cargo-pre
-
-      - name: set up git config
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name ${{ secrets.GIT_USER_NAME }}
-          git config user.email ${{ secrets.GIT_EMAIL }}
-
-      - name: install cargo-release
-        id: install-cargo-release
-        run: cargo install cargo-release --locked
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/cargo-release
-
-      - name: install nushell
-        id: install-nu
-        run: cargo install nu --locked
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/nu
+      - name: setup-job
+        uses: ./.github/actions/setup-job
+        with:
+          git_user_name: ${{ secrets.GIT_USER_NAME }}
+          git_email: ${{ secrets.GIT_EMAIL }}
 
       - name: release version
         if: ${{ inputs.release_level != 'none' }}

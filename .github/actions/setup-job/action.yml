@@ -1,0 +1,39 @@
+name: setup-job
+description: set up the job
+
+inputs:
+  git_user_name:
+    description: git user.name
+    type: string
+    required: true
+  git_email:
+    description: git email
+    type: string
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: setup-cargo-pre
+      uses: ./.github/actions/setup-cargo-pre
+
+    - name: set up git config
+      shell: bash
+      run: |
+        git config user.name ${{ inputs.git_user_name }}
+        git config user.email ${{ inputs.git_email }}
+
+    - name: install cargo-release
+      id: install-cargo-release
+      shell: bash
+      run: cargo install cargo-release --locked
+      env:
+        CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/cargo-release
+
+    - name: install nushell
+      id: install-nu
+      shell: bash
+      run: cargo install nu --locked
+      env:
+        CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/tools/nu
+
