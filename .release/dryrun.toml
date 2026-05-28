@@ -1,0 +1,4 @@
+pre-release-hook = [ "./pre-release" ]
+allow-branch = [
+  "*",
+]

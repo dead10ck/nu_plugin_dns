@@ -12,10 +12,6 @@ keywords = ["dns", "dig", "nu", "nushell", "plugin"]
 categories = ["command-line-utilities"]
 exclude = [ ".github/" ]
 
-[package.metadata.release]
-allow-branch = [ "main" ]
-pre-release-hook = [ "./pre-release" ]
-
 [[bin]]
 name = "nu_plugin_dns"
 bench = false
