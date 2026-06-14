@@ -8,7 +8,6 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 pub use config::Config;
 
-pub mod client;
 pub mod commands;
 pub mod config;
 pub mod constants;
@@ -77,18 +76,18 @@ impl Dns {
     }
 
     fn make_dns_resolver(&self, config: &Config) -> Result<HickoryResolver, LabeledError> {
+        let command_config = config.resolver_config.item.clone();
+
         let resolver = HickoryResolver::builder_with_config(
-            config.resolver_config.item.clone(),
+            command_config.resolver_config,
             self.runtime_provider.clone(),
         )
-        .with_options(config.resolver_opts.item.clone())
+        .with_options(command_config.resolver_opts)
         .build()
         .map_err(|err| {
             LabeledError::new("error constructing dns resolver")
                 .with_label(err.to_string(), Span::unknown())
         })?;
-
-        tracing::info!(config = ?config);
 
         Ok(resolver)
     }

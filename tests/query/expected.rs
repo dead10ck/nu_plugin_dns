@@ -1,7 +1,7 @@
 pub mod name {
     use std::sync::LazyLock;
 
-    use hickory_resolver::Name;
+    use hickory_proto::rr::Name;
 
     pub static ORIGIN: LazyLock<Name> = LazyLock::new(|| "nushell.sh.".parse().unwrap());
     pub static CALDAV: LazyLock<Name> = LazyLock::new(|| {
@@ -17,11 +17,11 @@ pub mod name {
 }
 
 pub mod rr {
-    use hickory_resolver::Name;
-
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::str::FromStr;
     use std::sync::LazyLock;
+
+    use hickory_proto::rr::Name;
 
     pub const THIRTY_MIN: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
 

@@ -2,16 +2,121 @@ pub mod commands {
     pub const QUERY: &str = "dns query";
 }
 
-pub mod flags {
-    pub const NAME: &str = "name";
-    pub const RESOLVER_CONFIG: &str = "resolver-config";
-    pub const RESOLVER_OPTS: &str = "resolver-opts";
-    pub const TYPE: &str = "type";
-    pub const CLASS: &str = "class";
-    pub const DNSSEC: &str = "dnssec";
-    pub const CODE: &str = "code";
-    pub const TASKS: &str = "tasks";
-    pub const TIMEOUT: &str = "timeout";
+pub mod params {
+    use std::sync::LazyLock;
+
+    use nu_protocol::{Flag, Parameter, PositionalArg, SyntaxShape};
+
+    pub static NAME: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Rest(PositionalArg {
+            name: "name".to_string(),
+            desc: "DNS record name".to_string(),
+
+            // [NOTE] this does not work
+            // SyntaxShape::OneOf(vec![
+            //     SyntaxShape::String,
+            //     SyntaxShape::List(Box::new(SyntaxShape::OneOf(vec![
+            //         SyntaxShape::String,
+            //         SyntaxShape::Binary,
+            //         SyntaxShape::Int,
+            //         SyntaxShape::Boolean,
+            //     ]))),
+            // ]),
+            shape: SyntaxShape::Any,
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static CONFIG: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Flag(Flag {
+            long: "config".to_string(),
+            short: None,
+            arg: Some(SyntaxShape::Any),
+            required: false,
+            desc: "DNS resolver config".to_string(),
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static TYPE: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Flag(Flag {
+            long: "type".to_string(),
+            short: Some('t'),
+            // Any because it can be a number too
+            arg: Some(SyntaxShape::Any),
+            required: false,
+            desc: "Query type".to_string(),
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static CLASS: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Flag(Flag {
+            long: "class".to_string(),
+            short: None,
+            // Any because it can be a number too
+            arg: Some(SyntaxShape::Any),
+            required: false,
+            desc: "Query class".to_string(),
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static TASKS: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Flag(Flag {
+            long: "tasks".to_string(),
+            short: Some('j'),
+            arg: Some(SyntaxShape::Int),
+            required: false,
+            desc: format!(
+                "Number of concurrent tasks to execute queries. Please be mindful not to overwhelm your nameserver! Default: {}",
+                super::config::default::TASKS
+            ),
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static TIMEOUT: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Flag(Flag {
+            long: "timeout".to_string(),
+            short: None,
+            arg: Some(SyntaxShape::Duration),
+            required: false,
+            desc: format!(
+                "How long a request can take before timing out. Be aware the concurrency level can affect this. Default: {}sec",
+                super::config::default::TIMEOUT.as_secs()
+            ),
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static CODE: LazyLock<Parameter> = LazyLock::new(|| {
+        Parameter::Flag(Flag {
+            long: "code".to_string(),
+            short: Some('c'),
+            arg: None,
+            required: false,
+            desc: "Return code fields with both string and numeric representations".to_string(),
+            completion: None,
+            var_id: None,
+            default_value: None,
+        })
+    });
+
+    pub static ALL: &[&LazyLock<Parameter>] =
+        &[&NAME, &CONFIG, &TYPE, &CLASS, &TASKS, &TIMEOUT, &CODE];
 }
 
 pub mod config {
