@@ -1,26 +1,26 @@
 use std::{
     pin::Pin,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 
-use futures_util::{stream::FuturesOrdered, Future, StreamExt, TryStreamExt};
+use futures_util::{Future, StreamExt, TryStreamExt, stream::FuturesOrdered};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
-    Example, IntoValue, LabeledError, ListStream, PipelineData, Signals, Signature, Span,
-    SyntaxShape, Value,
+    Example, IntoValue, LabeledError, ListStream, Parameter, PipelineData, Signals, Signature,
+    Span, Value,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
 
 use crate::{
+    Dns,
     dns::{
+        HickoryResolver,
         config::Config,
         constants,
         serde::{self, Query},
-        HickoryResolver,
     },
-    Dns,
 };
 
 pub type DnsQueryResult =
@@ -43,6 +43,11 @@ impl DnsQuery {
             .try_init();
 
         let config = Config::from_nu(engine.get_plugin_config()?, call)?;
+
+        if tracing::enabled!(tracing::Level::INFO) {
+            tracing::info!(config = %format!("{:#?}", config));
+        }
+
         let arg_inputs: Value = call.nth(0).unwrap_or(Value::nothing(call.head));
 
         let input: PipelineData = match input {
@@ -146,7 +151,7 @@ impl DnsQuery {
                         as Pin<Box<dyn Future<Output = _> + Send>>,
                 ]
                 .into_iter()
-                .collect()
+                .collect();
             }
         };
 
@@ -319,67 +324,26 @@ impl PluginCommand for DnsQuery {
     }
 
     fn signature(&self) -> nu_protocol::Signature {
-        Signature::build(self.name())
-            .rest(
-                constants::flags::NAME,
+        let mut sig = Signature::build(self.name());
 
-                // [NOTE] this does not work
-                // SyntaxShape::OneOf(vec![
-                //     SyntaxShape::String,
-                //     SyntaxShape::List(Box::new(SyntaxShape::OneOf(vec![
-                //         SyntaxShape::String,
-                //         SyntaxShape::Binary,
-                //         SyntaxShape::Int,
-                //         SyntaxShape::Boolean,
-                //     ]))),
-                // ]),
-                SyntaxShape::Any,
+        for param in constants::params::ALL {
+            // [TODO] this match is needed because Parameter does not implement
+            // `Clone`. Remove it when or if it ever does.
+            sig = match &***param {
+                Parameter::Required(positional_arg) => {
+                    sig.param(Parameter::Required(positional_arg.clone()))
+                }
+                Parameter::Optional(positional_arg) => {
+                    sig.param(Parameter::Optional(positional_arg.clone()))
+                }
+                Parameter::Rest(positional_arg) => {
+                    sig.param(Parameter::Rest(positional_arg.clone()))
+                }
+                Parameter::Flag(flag) => sig.param(flag.clone()),
+            }
+        }
 
-                "DNS record name",
-            )
-            .named(
-                constants::flags::SERVER,
-                SyntaxShape::String,
-                "Nameserver to query (defaults to system config or 8.8.8.8)",
-                Some('s'),
-            )
-            .named(
-                constants::flags::PROTOCOL,
-                SyntaxShape::String,
-                "Protocol to use to connect to the nameserver: UDP, TCP. (default: UDP)",
-                Some('p'),
-            )
-            .named(constants::flags::TYPE, SyntaxShape::Any, "Query type", Some('t'))
-            .named(constants::flags::CLASS, SyntaxShape::Any, "Query class", None)
-            .switch(
-                constants::flags::CODE,
-                "Return code fields with both string and numeric representations",
-                Some('c'),
-            )
-            .named(
-                constants::flags::DNSSEC,
-                SyntaxShape::String,
-                "Perform DNSSEC validation on records. Choices are: \"none\", \"opportunistic\" (validate if RRSIGs present, otherwise no validation; default)",
-                Some('d'),
-            )
-            .named(
-                constants::flags::DNS_NAME,
-                SyntaxShape::String,
-                "DNS name of the TLS certificate in use by the nameserver (for TLS and HTTPS only)",
-                Some('n'),
-            )
-            .named(
-                constants::flags::TASKS,
-                SyntaxShape::Int,
-                format!("Number of concurrent tasks to execute queries. Please be mindful not to overwhelm your nameserver! Default: {}", constants::config::default::TASKS),
-                Some('j'),
-            )
-            .named(
-                constants::flags::TIMEOUT,
-                SyntaxShape::Duration,
-                format!("How long a request can take before timing out. Be aware the concurrency level can affect this. Default: {}sec", constants::config::default::TIMEOUT.as_secs()),
-                None,
-            )
+        sig
     }
 
     fn examples(&'_ self) -> Vec<nu_protocol::Example<'_>> {

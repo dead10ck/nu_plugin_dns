@@ -6,13 +6,13 @@ use hickory_net::client::{Client, DnssecClient};
 use hickory_net::runtime::TokioRuntimeProvider;
 use hickory_net::xfer::{DnsHandle, DnsRequestSender};
 use hickory_net::{
-    h2::HttpsClientStreamBuilder, quic::QuicClientStream, runtime::RuntimeProvider,
-    tcp::TcpClientStream, udp::UdpClientStream, DnsMultiplexer,
+    DnsMultiplexer, h2::HttpsClientStreamBuilder, quic::QuicClientStream, runtime::RuntimeProvider,
+    tcp::TcpClientStream, udp::UdpClientStream,
 };
-use hickory_proto::op::{DnsRequest, DnsResponse};
 use hickory_proto::ProtoError;
+use hickory_proto::op::{DnsRequest, DnsResponse};
 use nu_protocol::{LabeledError, Span};
-use rustls::{pki_types::TrustAnchor, RootCertStore};
+use rustls::{RootCertStore, pki_types::TrustAnchor};
 use tokio::task::JoinHandle;
 
 use super::{config::Config, serde::DnssecMode};
@@ -23,7 +23,7 @@ type DnsHandleResponse =
 pub(crate) type BgHandle = JoinHandle<Result<(), ProtoError>>;
 
 #[derive(Clone)]
-pub struct DnsResolver {
+pub struct DnsClient {
     client: HickoryDnsClient,
 }
 
@@ -33,7 +33,7 @@ pub enum HickoryDnsClient {
     Dnssec(DnssecClient),
 }
 
-impl DnsResolver {
+impl DnsClient {
     pub async fn connect<F, S>(config: &Config, conn: F) -> Result<(Self, BgHandle), LabeledError>
     where
         S: DnsRequestSender,
@@ -48,16 +48,16 @@ impl DnsResolver {
 
         let (client, bg) = match config.dnssec_mode.item {
             DnssecMode::None => {
-                let (client, bg) = Client::connect(conn).await.map_err(connect_err)?;
+                let (client, bg) = Client::from_sender(conn).await.map_err(connect_err)?;
                 (HickoryDnsClient::Standard(client), bg)
             }
             DnssecMode::Opportunistic => {
-                let (client, bg) = DnssecClient::connect(conn).await.map_err(connect_err)?;
+                let (client, bg) = DnssecClient::from_sender(conn).await.map_err(connect_err)?;
                 (HickoryDnsClient::Dnssec(client), bg)
             }
         };
 
-        Ok((DnsResolver { client }, tokio::spawn(bg)))
+        Ok((DnsClient { client }, tokio::spawn(bg)))
     }
 
     pub async fn new(
@@ -66,7 +66,7 @@ impl DnsResolver {
     ) -> Result<(Self, BgHandle), LabeledError> {
         let (client, bg) = match config.protocol.item {
             Protocol::Udp => {
-                DnsResolver::connect(
+                DnsClient::connect(
                     config,
                     UdpClientStream::builder(config.server.item, provider.clone())
                         .with_timeout(
@@ -81,7 +81,7 @@ impl DnsResolver {
                 .await?
             }
             Protocol::Tcp => {
-                DnsResolver::connect(config, {
+                DnsClient::connect(config, {
                     let (stream, sender) = TcpClientStream::new(
                         config.server.item,
                         None,
@@ -110,7 +110,7 @@ impl DnsResolver {
                 match proto {
                     Protocol::Tls => {
                         let client_config = Arc::new(client_config);
-                        DnsResolver::connect(config, {
+                        DnsClient::connect(config, {
                             let (stream, sender) = hickory_proto::rustls::tls_client_connect(
                                 config.server.item,
                                 // safe to unwrap because having a DNS name
@@ -134,7 +134,7 @@ impl DnsResolver {
                     }
                     Protocol::Https => {
                         let client_config = Arc::new(client_config);
-                        DnsResolver::connect(config, {
+                        DnsClient::connect(config, {
                             HttpsClientStreamBuilder::with_client_config(
                                 client_config.clone(),
                                 provider.clone(),
@@ -149,7 +149,7 @@ impl DnsResolver {
                         .await?
                     }
                     Protocol::Quic => {
-                        DnsResolver::connect(config, {
+                        DnsClient::connect(config, {
                             let mut builder = QuicClientStream::builder();
                             builder.crypto_config(client_config.clone());
                             builder.build(
@@ -164,7 +164,7 @@ impl DnsResolver {
             }
             proto => {
                 return Err(LabeledError::new("unknown protocol")
-                    .with_label(format!("Unknown protocol: {}", proto), config.protocol.span))
+                    .with_label(format!("Unknown protocol: {}", proto), config.protocol.span));
             }
         };
 
@@ -172,13 +172,12 @@ impl DnsResolver {
     }
 }
 
-impl DnsHandle for DnsResolver {
+impl DnsHandle for DnsClient {
     type Response = DnsHandleResponse;
-    type Runtime = TokioRuntimeProvider;
 
     fn send<R>(&self, request: R) -> Self::Response
     where
-        R: Into<DnsRequest> + Unpin + Send + 'static,
+        R: Into<hickory_proto::xfer::DnsRequest> + Unpin + Send + 'static,
     {
         let request = request.into();
 

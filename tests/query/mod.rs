@@ -1,16 +1,15 @@
 use std::str::FromStr;
 
-use hickory_proto::rr::RecordType;
-use hickory_resolver::{IntoName, Name};
+use hickory_proto::rr::{IntoName, Name, RecordType};
 use nu_plugin_dns::dns::constants;
 use nu_protocol::{ShellError, Span, Value};
 
-use super::{record_values, HickoryResponseCode, TestCase, HARNESS};
+use super::{HARNESS, HickoryResponseCode, TestCase, record_values};
 
 mod expected;
 
 #[test]
-pub(crate) fn rr_a() -> Result<(), ShellError> {
+pub(crate) fn rr_a() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,
@@ -29,7 +28,7 @@ pub(crate) fn rr_a() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_aaaa() -> Result<(), ShellError> {
+pub(crate) fn rr_aaaa() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,
@@ -48,7 +47,7 @@ pub(crate) fn rr_aaaa() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_aname() -> Result<(), ShellError> {
+pub(crate) fn rr_aname() -> Result<(), Box<ShellError>> {
     let aname = expected::name::ORIGIN.prepend_label("acal").unwrap();
     let expected_aname_rr = (
         aname.clone(),
@@ -108,7 +107,7 @@ pub(crate) fn rr_aname() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_caa() -> Result<(), ShellError> {
+pub(crate) fn rr_caa() -> Result<(), Box<ShellError>> {
     let caa_issue = expected::name::ORIGIN
         .prepend_label("caa")
         .unwrap()
@@ -219,7 +218,7 @@ pub(crate) fn rr_caa() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_cert() -> Result<(), ShellError> {
+pub(crate) fn rr_cert() -> Result<(), Box<ShellError>> {
     let cert = expected::name::ORIGIN.prepend_label("cert").unwrap();
 
     HARNESS.plugin_test(
@@ -254,7 +253,7 @@ pub(crate) fn rr_cert() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_cname() -> Result<(), ShellError> {
+pub(crate) fn rr_cname() -> Result<(), Box<ShellError>> {
     // querying a cname specifically only returns the cname record
     HARNESS.plugin_test(
         TestCase {
@@ -270,6 +269,31 @@ pub(crate) fn rr_cname() -> Result<(), ShellError> {
         },
     )?;
 
+    // [NOTE] there's a very weird behavior from the hickory nameserver here. At the
+    // time of writing, it appears that in the case of a single-layer CNAME, the
+    // hickory resolver will simply return the answer as is: with the CNAME in
+    // the answers section and the corresponding A records for that CNAME in the
+    // additionals
+    //
+    // However, in the case where a CNAME points to another CNAME, it appears
+    // that the hickory resolver will choose to recursively do an additional
+    // query for the CNAMEs in the responses, seemingly ignoring that the
+    // answers are in the first response's additionals section. It puts all
+    // CNAME and A records into the answers section, with nothing in the
+    // additionals.
+    //
+    // Furthermore, this list of answers contians a duplicate record for the
+    // first CNAME.
+    //
+    // By all appearances, this seems like a bug in hickory's server; but,
+    // the use of the hickory server is purely for convenience in these
+    // tests, so it doesn't actually matter too much what records go
+    // in which section of the response message.
+    //
+    // Considering this, to validate, we can just combine all records from
+    // the answers and additionals sections, deduplicate, and compare to the
+    // expected output records.
+
     // querying for A on a CNAME returns the CNAME and A records
     HARNESS.plugin_test(
         TestCase {
@@ -279,15 +303,17 @@ pub(crate) fn rr_cname() -> Result<(), ShellError> {
         },
         HickoryResponseCode::NoError,
         |code, message| {
-            let expected = record_values(code, expected::rr::CNAME_CALDAV.clone());
-            let actual = message.get(constants::columns::message::ANSWER).unwrap();
-            assert_eq!(&expected, actual);
+            let expected = record_values(
+                code,
+                // A CNAME record will have the CNAME itself plus the A records
+                // in the answer section.
+                expected::rr::CNAME_CALDAV
+                    .clone()
+                    .into_iter()
+                    .chain(expected::rr::A.clone()),
+            );
 
-            // apparently the A records get put into ADDITIONAL
-            let expected = record_values(code, expected::rr::A.clone());
-            let actual = message
-                .get(constants::columns::message::ADDITIONAL)
-                .unwrap();
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
             assert_eq!(&expected, actual);
         },
@@ -302,22 +328,15 @@ pub(crate) fn rr_cname() -> Result<(), ShellError> {
         },
         HickoryResponseCode::NoError,
         |code, message| {
-            let expected = record_values(code, expected::rr::CNAME_CAL.clone());
-            let actual = message.get(constants::columns::message::ANSWER).unwrap();
-
-            assert_eq!(&expected, actual);
-
             let expected = record_values(
                 code,
-                expected::rr::CNAME_CALDAV
+                expected::rr::CNAME_CAL
                     .clone()
                     .into_iter()
+                    .chain(expected::rr::CNAME_CALDAV.clone())
                     .chain(expected::rr::A.clone()),
             );
-
-            let actual = message
-                .get(constants::columns::message::ADDITIONAL)
-                .unwrap();
+            let actual = message.get(constants::columns::message::ANSWER).unwrap();
 
             assert_eq!(&expected, actual);
         },
@@ -327,7 +346,7 @@ pub(crate) fn rr_cname() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_csync() -> Result<(), ShellError> {
+pub(crate) fn rr_csync() -> Result<(), Box<ShellError>> {
     let csync = expected::name::ORIGIN.prepend_label("csync").unwrap();
 
     HARNESS.plugin_test(
@@ -363,7 +382,7 @@ pub(crate) fn rr_csync() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_hinfo() -> Result<(), ShellError> {
+pub(crate) fn rr_hinfo() -> Result<(), Box<ShellError>> {
     let hinfo = expected::name::ORIGIN.prepend_label("hinfo").unwrap();
 
     HARNESS.plugin_test(
@@ -396,12 +415,12 @@ pub(crate) fn rr_hinfo() -> Result<(), ShellError> {
 
 #[test]
 #[ignore = "hickory missing support for dname in zone file parsing"]
-pub(crate) fn rr_dname() -> Result<(), ShellError> {
+pub(crate) fn rr_dname() -> Result<(), Box<ShellError>> {
     Ok(())
 }
 
 #[test]
-pub(crate) fn rr_mx() -> Result<(), ShellError> {
+pub(crate) fn rr_mx() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,
@@ -448,7 +467,7 @@ pub(crate) fn rr_mx() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_naptr() -> Result<(), ShellError> {
+pub(crate) fn rr_naptr() -> Result<(), Box<ShellError>> {
     let naptr = expected::name::ORIGIN.prepend_label("naptr").unwrap();
 
     HARNESS.plugin_test(
@@ -485,7 +504,7 @@ pub(crate) fn rr_naptr() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_ptr() -> Result<(), ShellError> {
+pub(crate) fn rr_ptr() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,
@@ -517,7 +536,7 @@ pub(crate) fn rr_ptr() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_soa() -> Result<(), ShellError> {
+pub(crate) fn rr_soa() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,
@@ -536,7 +555,7 @@ pub(crate) fn rr_soa() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_srv() -> Result<(), ShellError> {
+pub(crate) fn rr_srv() -> Result<(), Box<ShellError>> {
     let srv = expected::name::ORIGIN
         .prepend_label("_tcp")
         .unwrap()
@@ -586,7 +605,7 @@ pub(crate) fn rr_srv() -> Result<(), ShellError> {
 }
 
 #[test]
-pub(crate) fn rr_txt() -> Result<(), ShellError> {
+pub(crate) fn rr_txt() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,
@@ -598,9 +617,10 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
             let expected = record_values(
                 code,
                 [hickory_proto::rr::RData::TXT(
-                    hickory_proto::rr::rdata::TXT::new(vec![
-                        "v=spf1 include:spf.nushell.sh. ?all".into()
-                    ]),
+                    hickory_proto::rr::rdata::TXT::try_new(
+                        [b"v=spf1 include:spf.nushell.sh. ?all".as_slice()].into_iter(),
+                    )
+                    .expect("invalid TXT rdata"),
                 )]
                 .into_iter()
                 .map(|txt| {
@@ -624,7 +644,7 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
 /// A zone with a name exists, but not with the record type in the request. An
 /// empty answer is returned.
 #[test]
-pub(crate) fn empty() -> Result<(), ShellError> {
+pub(crate) fn empty() -> Result<(), Box<ShellError>> {
     HARNESS.plugin_test(
         TestCase {
             config: None,

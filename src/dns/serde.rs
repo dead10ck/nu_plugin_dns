@@ -94,7 +94,7 @@ impl Response<'_> {
             |records: &Vec<hickory_proto::rr::Record>| -> Result<Value, LabeledError> {
                 Ok(Value::list(
                     records
-                        .into_iter()
+                        .iter()
                         .map(|record| Record(record).into_value(code))
                         .collect::<Result<_, _>>()?,
                     Span::unknown(),
@@ -548,7 +548,7 @@ impl<'r> RData<'r> {
             hickory_proto::rr::RData::OPENPGPKEY(key) => {
                 Value::binary(&*key.public_key, Span::unknown())
             }
-            hickory_proto::rr::RData::OPT(opt) => Opt(&opt).into_value(),
+            hickory_proto::rr::RData::OPT(opt) => Opt(opt).into_value(),
             hickory_proto::rr::RData::PTR(name) => Value::string(name.to_string(), Span::unknown()),
 
             hickory_proto::rr::RData::SOA(soa) => {
