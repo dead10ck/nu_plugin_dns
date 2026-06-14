@@ -6,19 +6,19 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use hickory_resolver::IntoName;
+use hickory_proto::rr::IntoName;
 use hickory_server::{
-    authority::{Catalog, ZoneType},
-    store::file::{FileAuthority, FileConfig},
-    ServerFuture,
+    Server,
+    store::file::{FileConfig, FileZoneHandler},
+    zone_handler::{AxfrPolicy, Catalog, ZoneType},
 };
 use nu_plugin_dns::{
-    dns::{self, constants},
     Dns,
+    dns::{self, config::get_param_name, constants},
 };
 use nu_plugin_test_support::PluginTest;
 use nu_protocol::{
-    record, IntoPipelineData, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value,
+    IntoPipelineData, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value, record,
 };
 use tokio::net::UdpSocket;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -31,7 +31,7 @@ static HARNESS: LazyLock<TestHarness> = LazyLock::new(|| TestHarness::new().unwr
 
 struct TestHarness {
     runtime: tokio::runtime::Runtime,
-    _server: ServerFuture<Catalog>,
+    _server: Server<Catalog>,
 }
 
 impl TestHarness {
@@ -74,13 +74,13 @@ impl TestHarness {
             tracing::debug!(?origin);
 
             let file_config = FileConfig {
-                zone_file_path: entry.path(),
+                zone_path: entry.path(),
             };
 
-            let authority = FileAuthority::try_from_config(
+            let authority = FileZoneHandler::try_from_config(
                 origin.clone(),
                 ZoneType::Primary,
-                false,
+                AxfrPolicy::Deny,
                 Some(&root_dir),
                 &file_config,
                 None,
@@ -95,9 +95,15 @@ impl TestHarness {
 
     fn test_plugin_config(test_config: Option<nu_protocol::Record>) -> nu_protocol::Record {
         let mut config = record!(
-            constants::flags::SERVER => Value::test_string(Self::TEST_RESOLVER_SOCKET_ADDR),
-            constants::flags::CODE => true.into_value(Span::unknown()),
-            constants::flags::DNSSEC => "none".into_value(Span::unknown()),
+            get_param_name(&constants::params::CONFIG) => Value::test_record(record!(
+                "name_servers" => Value::test_list(vec![
+                    Value::test_record(record!(
+                        "ip" => Value::test_string(Self::TEST_RESOLVER_SOCKET_ADDR),
+                    ))
+                ]),
+                "validation" => Value::test_bool(false),
+            )),
+            get_param_name(&constants::params::CODE) => true.into_value(Span::unknown()),
         );
 
         if let Some(test_config) = test_config {
@@ -109,7 +115,7 @@ impl TestHarness {
         config
     }
 
-    fn init_hickory_server(runtime: &tokio::runtime::Runtime) -> ServerFuture<Catalog> {
+    fn init_hickory_server(runtime: &tokio::runtime::Runtime) -> Server<Catalog> {
         let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(tracing_subscriber::EnvFilter::from_default_env())
@@ -124,7 +130,7 @@ impl TestHarness {
             .await;
 
             let catalog = Self::collect_zones().await;
-            let mut server = ServerFuture::new(catalog);
+            let mut server = Server::new(catalog);
             server.register_socket(socket.unwrap());
             server
         })
@@ -156,7 +162,7 @@ impl TestHarness {
             .engine_state()
             .get_plugin_config(Dns::PLUGIN_NAME)
             .unwrap()
-            .get_data_by_key(constants::flags::CODE)
+            .get_data_by_key(get_param_name(&constants::params::CODE))
             .unwrap()
             .as_bool()
             .unwrap();
@@ -217,7 +223,7 @@ fn assert_message_response(
         .get(constants::columns::message::header::RESPONSE_CODE)
         .unwrap()
         .as_record()?
-        .get(constants::flags::CODE)
+        .get(get_param_name(&constants::params::CODE))
         .unwrap()
         .as_int()?;
 
@@ -234,7 +240,7 @@ where
 {
     iter.into_iter()
         .map(|(name, ttl, rdata)| {
-            dns::serde::Record(hickory_proto::rr::Record::from_rdata(
+            dns::serde::Record(&hickory_proto::rr::Record::from_rdata(
                 name.into_name().unwrap(),
                 ttl.num_seconds() as u32,
                 rdata.into(),

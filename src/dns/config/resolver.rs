@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use nu_protocol::{FromValue, LabeledError, ShellError, Spanned, Value};
-use serde::Serialize;
 
 type HickoryProtocolConfig = hickory_resolver::config::ProtocolConfig;
 
@@ -88,48 +87,30 @@ impl<'c> TryFrom<&'c ProtocolConfig> for HickoryProtocolConfig {
         Ok(config)
     }
 }
-
+pub type HickoryResolverOpts = hickory_resolver::config::ResolverOpts;
 pub type HickoryResolverConfig = hickory_resolver::config::ResolverConfig;
 
-#[derive(Debug, serde::Deserialize)]
-pub struct ResolverConfig(pub hickory_resolver::config::ResolverConfig);
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ResolverConfig {
+    #[serde(flatten)]
+    pub resolver_config: HickoryResolverConfig,
+
+    #[serde(flatten)]
+    pub resolver_opts: HickoryResolverOpts,
+}
 
 impl FromValue for ResolverConfig {
     fn from_value(val: Value) -> Result<Self, ShellError> {
         let span = val.span();
-        let mut buf = Vec::new();
-        val.serialize(&mut rmp_serde::Serializer::new(&mut buf))
-            .map_err(|err| {
-                LabeledError::new("failed to serialize resolver config")
-                    .with_label(err.to_string(), span)
-            })?;
 
-        rmp_serde::from_slice(&buf).map_err(|err| {
-            ShellError::LabeledError(
-                LabeledError::new("error converting config")
-                    .with_label(err.to_string(), span)
-                    .into(),
-            )
-        })
-    }
-}
+        let json = serde_json::to_string(&val).map_err(|err| {
+            LabeledError::new("failed to serialize resolver config")
+                .with_label(err.to_string(), span)
+        })?;
 
-pub type HickoryResolverOpts = hickory_resolver::config::ResolverOpts;
+        tracing::debug!(json = %json);
 
-#[derive(Debug, serde::Deserialize)]
-pub struct ResolverOpts(pub hickory_resolver::config::ResolverOpts);
-
-impl FromValue for ResolverOpts {
-    fn from_value(val: Value) -> Result<Self, ShellError> {
-        let span = val.span();
-        let mut buf = Vec::new();
-        val.serialize(&mut rmp_serde::Serializer::new(&mut buf))
-            .map_err(|err| {
-                LabeledError::new("failed to serialize resolver opts")
-                    .with_label(err.to_string(), span)
-            })?;
-
-        rmp_serde::from_slice(&buf).map_err(|err| {
+        serde_json::from_str(&json).map_err(|err| {
             ShellError::LabeledError(
                 LabeledError::new("error converting config")
                     .with_label(err.to_string(), span)
