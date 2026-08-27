@@ -25,9 +25,9 @@ lto = "thin"
 
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
-futures-util = "0.3.33"
-nu-plugin = "0.114.1"
-nu-protocol = "0.114.1"
+futures-util = "0.3.34"
+nu-plugin = "0.115.1"
+nu-protocol = "0.115.1"
 
 tokio = "1.53.1"
 tracing = "0.1"
@@ -68,8 +68,8 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.114.1"
-nu-command = { version = "0.114.1", features = ["plugin"] }
+nu-plugin-test-support = "0.115.1"
+nu-command = { version = "0.115.1", features = ["plugin"] }
 
 # [NOTE] the feature resolution comes out very strangely here by default
 #
@@ -86,7 +86,7 @@ nu-command = { version = "0.114.1", features = ["plugin"] }
 #
 # work around this by explicitly pulling in `nu-plugin-engine` with the
 # `local-socket` feature
-nu-plugin-engine = { version = "0.114.1", features = ["local-socket"] }
+nu-plugin-engine = { version = "0.115.1", features = ["local-socket"] }
 
 tokio = { version = "1.53.1", features = ["fs"] }
 

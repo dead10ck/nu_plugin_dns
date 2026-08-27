@@ -3,27 +3,25 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use hickory_proto::{
+    ProtoError,
     dnssec::{
-        self,
+        self, PublicKey,
         rdata::{
-            key::{KeyTrust, KeyUsage},
             DNSSECRData,
+            key::{KeyTrust, KeyUsage},
         },
-        PublicKey,
     },
     rr::{
-        domain,
+        RecordType, domain,
         rdata::{
             opt::{EdnsCode, EdnsOption},
             sshfp,
             svcb::{EchConfigList, IpHint, SvcParamValue, Unknown},
             tlsa,
         },
-        RecordType,
     },
-    ProtoError,
 };
-use nu_protocol::{record, FromValue, LabeledError, Span, Value};
+use nu_protocol::{FromValue, LabeledError, Span, Value, record};
 
 use super::config::Config;
 use super::constants;
@@ -329,7 +327,7 @@ impl Query {
                 let name = domain::Name::from_labels(
                     vals.iter()
                         .map(|val| match val {
-                            Value::Binary { val: bin_val, .. } => Ok(bin_val.clone()),
+                            Value::Binary { val: bin_val, .. } => Ok(bin_val.clone().into_owned()),
                             Value::Int { val, .. } => {
                                 let bytes = val.to_ne_bytes();
                                 let non0 = bytes
@@ -1210,7 +1208,7 @@ impl TryFrom<Value> for Protocol {
             },
             _ => {
                 return Err(LabeledError::new("invalid input")
-                    .with_label("Input must be a string", value.span()))
+                    .with_label("Input must be a string", value.span()));
             }
         };
 
