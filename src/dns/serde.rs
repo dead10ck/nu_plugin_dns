@@ -246,7 +246,7 @@ impl Query {
                         .with_label(format!("Record must have a column named '{}'", col), span)
                 };
 
-                let name = domain::Name::from_utf8(
+                let name = domain::Name::from_str_relaxed(
                     String::from_value(
                         rec.get_data_by_key(constants::columns::rr::NAME)
                             .ok_or_else(|| must_have_col_err(constants::columns::rr::NAME))?,
@@ -283,7 +283,7 @@ impl Query {
             str_val @ Value::String { val, .. } => {
                 let span = str_val.span();
 
-                let name = domain::Name::from_utf8(val).map_err(|err| {
+                let name = domain::Name::from_str_relaxed(val).map_err(|err| {
                     LabeledError::new("invalid name")
                         .with_label(format!("Error parsing name: {}", err), span)
                 })?;
