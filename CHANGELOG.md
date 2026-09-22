@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.13] - 2026-09-22
+
+* #13: Use more relaxed rules for parsing domain names. Previously, domain names
+  used IDNA decoding, a consequence of which is that underscores were rejected
+  in domain names, although underscores are very common in practice. Now,
+  IDNA decoding is attempted, but falls back to plain ASCII decoding. Thanks
+  to @Electrenator.
+* Upgrade dependencies
+
 ## [4.0.12] - 2026-08-27
 
 * Upgrade nushell to 0.115.1 + other deps
