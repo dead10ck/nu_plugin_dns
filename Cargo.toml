@@ -26,15 +26,15 @@ lto = "thin"
 [dependencies]
 chrono = { version = "0.4", features = [ "std" ], default-features = false }
 futures-util = "0.3.34"
-nu-plugin = "0.116.1"
-nu-protocol = "0.116.1"
+nu-plugin = "0.117.0"
+nu-protocol = "0.117.0"
 
 tokio = "1.54.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 rustls = "0.23.46"
-webpki-roots = "1.0.11"
+webpki-roots = "1.0.12"
 tokio-util = { version = "0.7.20", features = ["rt"] }
 
 [dependencies.hickory-resolver]
@@ -68,27 +68,15 @@ features = [
 ]
 
 [dev-dependencies]
-nu-plugin-test-support = "0.116.1"
-nu-command = { version = "0.116.1", features = ["plugin"] }
-
-# [NOTE] the feature resolution comes out very strangely here by default
-#
-# * `nu-plugin-core` gets pulled in via the regular dependencies with its
-#   default features, which in turn activates the `local-socket` feature
-# * `nu-command` transitively pulls in `nu-plugin-engine` from the root
-#   workspace, which deactivates its default features, including `local-socket`
-# * `nu-plugin-engine` itself depends on `nu-plugin-core`, and has its own
-#   corresponding `local-socket` feature to handle the one from `nu-plugin-core`
-#
-# so we end up with `nu-plugin-core` *with* the `local-socket` feature, but
-# `nu-plugin-engine` *without* the `local-socket` feature, which leads to a
-# compile error due to a missing enum variant
-#
-# work around this by explicitly pulling in `nu-plugin-engine` with the
-# `local-socket` feature
-nu-plugin-engine = { version = "0.116.1", features = ["local-socket"] }
-
+# [NOTE] See: https://github.com/nushell/nushell/blob/651f0e4e3e79ab1869fb379a9db98c09c513c848/Cargo.toml#L209-L213
+notify = "=9.0.0-rc.4"
+nu-plugin-test-support = "0.117.0"
 tokio = { version = "1.54.1", features = ["fs"] }
+
+[dev-dependencies.nu-command]
+version = "0.117.0"
+default-features = false
+features = ["plugin"]
 
 [dev-dependencies.hickory-server]
 version = "0.25.2"
