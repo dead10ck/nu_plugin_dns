@@ -10,7 +10,7 @@ use hickory_proto::{
 };
 use hickory_resolver::config::ResolverConfig;
 use nu_plugin::EvaluatedCall;
-use nu_protocol::{record, LabeledError, Span, Spanned, Value};
+use nu_protocol::{LabeledError, Span, Spanned, Value, record};
 
 use crate::spanned;
 
@@ -243,7 +243,7 @@ impl Config {
 
             Some(val) => {
                 return Err(LabeledError::new("should be int")
-                    .with_label("number of tasks should be an int", val.span()))
+                    .with_label("number of tasks should be an int", val.span()));
             }
         };
 
@@ -262,7 +262,7 @@ impl Config {
 
             Some(val) => {
                 return Err(LabeledError::new("should be duration")
-                    .with_label("timeout should be a positive duration", val.span()))
+                    .with_label("timeout should be a positive duration", val.span()));
             }
         };
 

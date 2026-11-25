@@ -5,7 +5,7 @@ use hickory_resolver::{IntoName, Name};
 use nu_plugin_dns::dns::constants;
 use nu_protocol::{ShellError, Span, Value};
 
-use super::{record_values, HickoryResponseCode, TestCase, HARNESS};
+use super::{HARNESS, HickoryResponseCode, TestCase, record_values};
 
 mod expected;
 
@@ -599,7 +599,7 @@ pub(crate) fn rr_txt() -> Result<(), ShellError> {
                 code,
                 [hickory_proto::rr::RData::TXT(
                     hickory_proto::rr::rdata::TXT::new(vec![
-                        "v=spf1 include:spf.nushell.sh. ?all".into()
+                        "v=spf1 include:spf.nushell.sh. ?all".into(),
                     ]),
                 )]
                 .into_iter()

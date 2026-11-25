@@ -8,17 +8,17 @@ use std::{
 
 use hickory_resolver::IntoName;
 use hickory_server::{
+    ServerFuture,
     authority::{Catalog, ZoneType},
     store::file::{FileAuthority, FileConfig},
-    ServerFuture,
 };
 use nu_plugin_dns::{
-    dns::{self, constants},
     Dns,
+    dns::{self, constants},
 };
 use nu_plugin_test_support::PluginTest;
 use nu_protocol::{
-    record, IntoPipelineData, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value,
+    IntoPipelineData, IntoValue, PipelineData, ShellError, Span, TryIntoValue, Value, record,
 };
 use tokio::net::UdpSocket;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

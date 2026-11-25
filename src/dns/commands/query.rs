@@ -1,10 +1,10 @@
 use std::{
     pin::Pin,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
-use futures_util::{stream::FuturesOrdered, Future, FutureExt, StreamExt, TryStreamExt};
+use futures_util::{Future, FutureExt, StreamExt, TryStreamExt, stream::FuturesOrdered};
 use hickory_client::client::ClientHandle;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
@@ -16,13 +16,13 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
 
 use crate::{
+    Dns,
     dns::{
         client::{BgHandle, DnsClient},
         config::Config,
         constants,
         serde::{self, Query},
     },
-    Dns,
 };
 
 pub type DnsQueryResult =
@@ -162,7 +162,7 @@ impl DnsQuery {
                         as Pin<Box<dyn Future<Output = _> + Send>>,
                 ]
                 .into_iter()
-                .collect()
+                .collect();
             }
         };
 

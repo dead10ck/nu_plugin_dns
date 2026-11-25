@@ -5,12 +5,11 @@ use futures_util::Stream;
 use hickory_client::client::{Client, DnssecClient};
 use hickory_proto::xfer::{DnsRequestSender, Protocol};
 use hickory_proto::{
-    h2::HttpsClientStreamBuilder, quic::QuicClientStream, runtime::RuntimeProvider,
-    tcp::TcpClientStream, udp::UdpClientStream, xfer::DnsResponse, DnsHandle, DnsMultiplexer,
-    ProtoError,
+    DnsHandle, DnsMultiplexer, ProtoError, h2::HttpsClientStreamBuilder, quic::QuicClientStream,
+    runtime::RuntimeProvider, tcp::TcpClientStream, udp::UdpClientStream, xfer::DnsResponse,
 };
 use nu_protocol::{LabeledError, Span};
-use rustls::{pki_types::TrustAnchor, RootCertStore};
+use rustls::{RootCertStore, pki_types::TrustAnchor};
 use tokio::task::JoinHandle;
 
 use super::{config::Config, serde::DnssecMode};
@@ -161,7 +160,7 @@ impl DnsClient {
             }
             proto => {
                 return Err(LabeledError::new("unknown protocol")
-                    .with_label(format!("Unknown protocol: {}", proto), config.protocol.span))
+                    .with_label(format!("Unknown protocol: {}", proto), config.protocol.span));
             }
         };
 
